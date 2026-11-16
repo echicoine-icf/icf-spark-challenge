@@ -1,0 +1,5 @@
+# Use only if NVIDIA GPU passthrough works in Docker Desktop / WSL2.
+# Example: docker compose -f compose.yaml -f compose.gpu.yaml --profile ai up -d ollama
+services:
+  ollama:
+    gpus: all

@@ -1,0 +1,73 @@
+name: icf-spark
+
+services:
+  db:
+    image: pgvector/pgvector:0.8.7-pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-spark}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-spark_local_dev_only}
+      POSTGRES_DB: ${POSTGRES_DB:-spark}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5434}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  api:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-spark}:${POSTGRES_PASSWORD:-spark_local_dev_only}@db:5432/${POSTGRES_DB:-spark}
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    volumes:
+      - ./backend/app:/app/app:ro
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    depends_on:
+      db:
+        condition: service_healthy
+
+  corpus-extract:
+    build:
+      context: ./backend
+    profiles: ["tools"]
+    volumes:
+      - type: bind
+        source: ../dbgap.tar.gz
+        target: /input/dbgap.tar.gz
+        read_only: true
+      - corpus_data:/corpus
+    command: ["python", "-m", "app.extract_corpus", "--archive", "/input/dbgap.tar.gz", "--destination", "/corpus"]
+
+  corpus-inspect:
+    build:
+      context: ./backend
+    profiles: ["tools"]
+    volumes:
+      - corpus_data:/corpus:ro
+      - ./reports:/reports
+    entrypoint: ["python", "-m", "app.inspect_corpus"]
+    command: ["--root", "/corpus", "--report", "/reports/corpus_inventory.json", "--max-files", "30000"]
+
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["ai"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${OLLAMA_PORT:-11434}:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    # CPU configuration. GPU support is opt-in via compose.gpu.yaml.
+
+volumes:
+  postgres_data:
+  corpus_data:
+  ollama_data:

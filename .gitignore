@@ -1,0 +1,25 @@
+.env
+.env.*
+!.env.example
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+.vscode/
+.idea/
+# NIH corpus and generated data should never be committed.
+*.tar.gz
+*.tgz
+corpus/
+data/
+reports/*
+!reports/.gitkeep
+models/weights/
+*.gguf
+*.safetensors
+*.onnx
+*.pt
+*.pth
+*.bin
+*.sqlite3
+*.db
