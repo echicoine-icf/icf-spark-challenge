@@ -23,3 +23,14 @@ models/weights/
 *.bin
 *.sqlite3
 *.db
+
+# Downloaded licensed/versioned ontology assets and receipts (local only).
+knowledge/*
+!knowledge/.gitkeep
+
+# Deployment-local artifact lock contains paths/hashes; ship with approved artifact bundle instead.
+deployment/artifacts.lock.json
+
+# Milestone 5C — frozen local SapBERT snapshots and Hugging Face download cache.
+# Keep the model receipt/checksums in the submission asset bundle, not in Git.
+/models/sapbert/

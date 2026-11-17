@@ -26,6 +26,20 @@ SPARK/
     reports/
 ```
 
+## Configure ports (no Compose edits needed)
+
+Edit `.env` in the repository root (copy `.env.example` once if you have not
+already). Existing `.env` files are not changed when you download an updated
+scaffold. To switch ports, update the values in `.env` and recreate affected
+services:
+
+```bash
+docker compose up -d --build --force-recreate db api
+```
+
+Changing host port mappings does not remove named Docker volumes. **Do not**
+use `docker compose down -v` unless you intend to delete persisted data.
+
 ## Start (Git Bash)
 
 ```bash
@@ -34,16 +48,18 @@ cp .env.example .env
 docker compose config -q
 docker compose up -d --build db api
 docker compose ps
-curl http://localhost:8000/health
-curl http://localhost:8000/ready
-curl http://localhost:8000/api/v1/stats
+curl http://localhost:18080/health
+curl http://localhost:18080/ready
+curl http://localhost:18080/api/v1/stats
 ```
 
-Interactive API docs: http://localhost:8000/docs
+Interactive API docs: http://localhost:18080/docs
 
-The PostgreSQL port is mapped to **localhost:5434** to avoid a common local
-5432 conflict. Default local-only credentials are in `.env`; replace them for
-anything beyond local development.
+All HOST ports are configurable in `.env`. Defaults: API `18080`, PostgreSQL
+`15432`, optional Ollama `11435`; `18081` reserved for a future Chainlit frontend.
+Container-internal ports remain `8000`, `5432`, and `11434`. Change only `.env`
+to avoid host port conflicts. Default local-only credentials are in `.env`;
+replace them for anything beyond local development.
 
 ## Extract the mounted archive once
 

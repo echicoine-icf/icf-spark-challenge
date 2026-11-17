@@ -1,0 +1,69 @@
+{
+  "manifest_version": 1,
+  "project": "ICF SPARK dbGaP",
+  "scope": "development bootstrap and offline artifact verification; not NIH submission harness",
+  "corpus": {
+    "path": "../dbgap.tar.gz",
+    "sha256": null,
+    "expected_database_rows": {
+      "studies": 3578,
+      "phenotype_datasets": 16070,
+      "genotype_datasets": 2084,
+      "phenotype_variables": 479760,
+      "variable_summaries": 1095137
+    }
+  },
+  "ontologies": [
+    {
+      "name": "MONDO",
+      "file": "knowledge/MONDO.obo",
+      "container_file": "/knowledge/MONDO.obo",
+      "release": "releases/2026-11-03",
+      "sha256": "b5a3d848578694601dffb1c2866798d4f6f4b4a12c315030c4d4c62ffe4e7e22",
+      "source_uri": "https://purl.obolibrary.org/obo/mondo.obo",
+      "license": "CC BY 4.0",
+      "expected_concepts": 32137,
+      "expected_terms": 92235
+    }
+  ],
+  "models": [
+    {
+      "name": "SapBERT",
+      "repo_id": "cambridgeltl/SapBERT-from-PubMedBERT-fulltext",
+      "directory": "models/sapbert",
+      "receipt": "models/sapbert/receipt.json",
+      "revision": "090663c3ae57bf35ffe4d0d468a2a88d03051a4d",
+      "license": "apache-2.0",
+      "optional": true,
+      "embedding_dimensions": 768,
+      "embedding_method": "normalized CLS pooling; max_length=25"
+    }
+  ],
+  "models_status": "optional local SapBERT model requires preparation-stage fetch and immutable revision pin; do not include unverified weights in release",
+  "terminologies": [
+    {
+      "name": "RXNORM",
+      "file": "knowledge/RxNorm_full_prescribe_11022026.zip",
+      "container_file": "/knowledge/RxNorm_full_prescribe_11022026.zip",
+      "release": "2026-11-02",
+      "sha256": "c742a6c4b2995194aa3479400e08a7c1ad707178bfc80fe9c8cd7afa693ae987",
+      "source_uri": "https://www.nlm.nih.gov/research/umls/licensedcontent/rxnormfiles.html",
+      "license_acknowledged": true,
+      "source_license": "NLM RxNorm prescribable-content terms",
+      "expected_concepts": 81538,
+      "expected_terms": 119711
+    },
+    {
+      "name": "LOINC",
+      "file": "knowledge/Loinc_2.83.zip",
+      "container_file": "/knowledge/Loinc_2.83.zip",
+      "release": "2.83",
+      "sha256": "077a0718e87d8309ffe3a673f75b836a8e783dc36a646413ef97c71c12eab27e",
+      "source_uri": "https://loinc.org/downloads",
+      "license_acknowledged": true,
+      "source_license": "LOINC License; honor EXTERNAL_COPYRIGHT_NOTICE",
+      "expected_concepts": 62138,
+      "expected_terms": 124231
+    }
+  ]
+}

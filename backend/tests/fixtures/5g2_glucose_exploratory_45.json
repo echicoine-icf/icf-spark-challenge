@@ -1,0 +1,366 @@
+{
+  "description": "Unblinded exploratory source judgments, NOT clinical gold labels, frozen from user-provided 5G.2 assessment. Do not use as independent quality score.",
+  "case_count": 45,
+  "cases": [
+    {
+      "variable_id": "phv00165308.v2",
+      "variable_name": "esp_fastglucose_baseline",
+      "variable_description": "BASELINE GLUCOSE",
+      "reported_unit": "mg/dl",
+      "exploratory_measurement_judgment": "yes",
+      "classifier": "likely_measurement"
+    },
+    {
+      "variable_id": "phv00033197.v1",
+      "variable_name": "VAL32B24",
+      "variable_description": "3:00 a.m. blood glucose at OD 340 (quarterly visit 24)",
+      "reported_unit": "OD 340",
+      "exploratory_measurement_judgment": "yes",
+      "classifier": "ambiguous"
+    },
+    {
+      "variable_id": "phv00376955.v1",
+      "variable_name": "GlucoseNotDone",
+      "variable_description": "Glucose not done [Mexiletine Laboratory Form]",
+      "reported_unit": "",
+      "exploratory_measurement_judgment": "no",
+      "classifier": "ambiguous"
+    },
+    {
+      "variable_id": "phv00110346.v1",
+      "variable_name": "GLUC12",
+      "variable_description": "GLUCOSE TOLERANCE TEST INDICATOR",
+      "reported_unit": "",
+      "exploratory_measurement_judgment": "no",
+      "classifier": "ambiguous"
+    },
+    {
+      "variable_id": "phv00265431.v1",
+      "variable_name": "FAST_GLU",
+      "variable_description": "Fasting glucose",
+      "reported_unit": "mmol/l",
+      "exploratory_measurement_judgment": "yes",
+      "classifier": "likely_measurement"
+    },
+    {
+      "variable_id": "phv00397295.v2",
+      "variable_name": "A2H_GLU",
+      "variable_description": "2-hour glucose",
+      "reported_unit": "mmol/L",
+      "exploratory_measurement_judgment": "yes",
+      "classifier": "ambiguous"
+    },
+    {
+      "variable_id": "phv00001575.v1",
+      "variable_name": "FD30",
+      "variable_description": "GLUCOSE CHALLENGE: TIME OF LAST EATING, MINUTE",
+      "reported_unit": "MINUTE",
+      "exploratory_measurement_judgment": "no",
+      "classifier": "non_measurement_context"
+    },
+    {
+      "variable_id": "phv00462173.v4",
+      "variable_name": "GLUC2HYN",
+      "variable_description": "Tested for 2 hour post-oral glucose challenge test",
+      "reported_unit": "",
+      "exploratory_measurement_judgment": "no",
+      "classifier": "non_measurement_context"
+    },
+    {
+      "variable_id": "phv00001576.v1",
+      "variable_name": "FD31",
+      "variable_description": "GLUCOSE CHALLENGE: TIME GLUCOSE GIVEN, AM OR PM",
+      "reported_unit": "",
+      "exploratory_measurement_judgment": "no",
+      "classifier": "non_measurement_context"
+    },
+    {
+      "variable_id": "phv00379575.v1",
+      "variable_name": "GlucoseLevel",
+      "variable_description": "Glucose Level [Day 1 Form]",
+      "reported_unit": "",
+      "exploratory_measurement_judgment": "yes",
+      "classifier": "likely_measurement"
+    },
+    {
+      "variable_id": "phv00483536.v1",
+      "variable_name": "FASTING_GLUCOSE",
+      "variable_description": "Fasting blood glucose",
+      "reported_unit": "mmol/L",
+      "exploratory_measurement_judgment": "yes",
+      "classifier": "likely_measurement"
+    },
+    {
+      "variable_id": "phv00001573.v1",
+      "variable_name": "FD28",
+      "variable_description": "GLUCOSE CHALLENGE: TIME OF LAST EATING, AM OR PM",
+      "reported_unit": "",
+      "exploratory_measurement_judgment": "no",
+      "classifier": "non_measurement_context"
+    },
+    {
+      "variable_id": "phv00117552.v2",
+      "variable_name": "DL7GLU",
+      "variable_description": "YEAR 7 GLUCOSE (ug/dL)",
+      "reported_unit": "ug/dL",
+      "exploratory_measurement_judgment": "yes",
+      "classifier": "ambiguous"
+    },
+    {
+      "variable_id": "phv00482943.v1",
+      "variable_name": "glu_2hr",
+      "variable_description": "2-hour glucose",
+      "reported_unit": "ng/mL",
+      "exploratory_measurement_judgment": "yes",
+      "classifier": "ambiguous"
+    },
+    {
+      "variable_id": "phv00400532.v1",
+      "variable_name": "glucose",
+      "variable_description": "Glucose (mg/dl) on day of C-peptide measurement",
+      "reported_unit": "mg/dl",
+      "exploratory_measurement_judgment": "yes",
+      "classifier": "likely_measurement"
+    },
+    {
+      "variable_id": "phv00110353.v1",
+      "variable_name": "ADMHR12",
+      "variable_description": "HOUR GLUCOSE ADMINISTERED",
+      "reported_unit": "",
+      "exploratory_measurement_judgment": "no",
+      "classifier": "non_measurement_context"
+    },
+    {
+      "variable_id": "phv00383249.v1",
+      "variable_name": "ImpairedGlucToleranceFastin",
+      "variable_description": "Impaired glucose tolerance Fasting glucose level [Medical Form for Physicians (Mothers)]",
+      "reported_unit": "",
+      "exploratory_measurement_judgment": "yes",
+      "classifier": "likely_measurement"
+    },
+    {
+      "variable_id": "phv00529783.v1",
+      "variable_name": "Visite_Diagnostic_de_DG_V2",
+      "variable_description": "Diagnosis of gestational diabetes at 2nd trimester visit based on OGTT 75g glucose with fasting, 1h-post and 2h-post values basedon IADPSG criteria",
+      "reported_unit": "",
+      "exploratory_measurement_judgment": "no",
+      "classifier": "ambiguous"
+    },
+    {
+      "variable_id": "phv00110355.v1",
+      "variable_name": "ADMAP12",
+      "variable_description": "GLUCOSE ADMINISTERED IN AM OR PM",
+      "reported_unit": "",
+      "exploratory_measurement_judgment": "no",
+      "classifier": "non_measurement_context"
+    },
+    {
+      "variable_id": "phv00098481.v1",
+      "variable_name": "m_OneHrPG_CLC_mg",
+      "variable_description": "Mother's one hour OGTT glucose",
+      "reported_unit": "mg/dL",
+      "exploratory_measurement_judgment": "yes",
+      "classifier": "likely_measurement"
+    },
+    {
+      "variable_id": "phv00102451.v1",
+      "variable_name": "ADMAP12",
+      "variable_description": "GLUCOSE ADMINISTERED IN AM OR PM",
+      "reported_unit": "",
+      "exploratory_measurement_judgment": "no",
+      "classifier": "non_measurement_context"
+    },
+    {
+      "variable_id": "phv00107748.v1",
+      "variable_name": "ADMAP12",
+      "variable_description": "GLUCOSE ADMINISTERED IN AM OR PM",
+      "reported_unit": "",
+      "exploratory_measurement_judgment": "no",
+      "classifier": "non_measurement_context"
+    },
+    {
+      "variable_id": "phv00334829.v1",
+      "variable_name": "Treatment_GlucoseMgKgDay43",
+      "variable_description": "Past Hyperammonemic Events. Treatment: Glucose, mgk/gday (43) [Baseline Assessment Form]",
+      "reported_unit": "mgkg/day",
+      "exploratory_measurement_judgment": "no",
+      "classifier": "ambiguous"
+    },
+    {
+      "variable_id": "phv00412806.v1",
+      "variable_name": "GLUC_F",
+      "variable_description": "Fasting Glucose (mmol/L)",
+      "reported_unit": "mmol/L",
+      "exploratory_measurement_judgment": "yes",
+      "classifier": "likely_measurement"
+    },
+    {
+      "variable_id": "phv00001577.v1",
+      "variable_name": "FD32",
+      "variable_description": "GLUCOSE CHALLENGE: TIME GLUCOSE GIVEN, HOUR",
+      "reported_unit": "HOUR",
+      "exploratory_measurement_judgment": "no",
+      "classifier": "non_measurement_context"
+    },
+    {
+      "variable_id": "phv00001396.v1",
+      "variable_name": "FC40",
+      "variable_description": "GLUCOSE CHALLENGE: TIME GLUCOSE GIVEN. MINUTE",
+      "reported_unit": "",
+      "exploratory_measurement_judgment": "no",
+      "classifier": "non_measurement_context"
+    },
+    {
+      "variable_id": "phv00001393.v1",
+      "variable_name": "FC37",
+      "variable_description": "GLUCOSE CHALLENGE: TIME OF LAST EATING, MINUTE",
+      "reported_unit": "",
+      "exploratory_measurement_judgment": "no",
+      "classifier": "non_measurement_context"
+    },
+    {
+      "variable_id": "phv00435308.v1",
+      "variable_name": "gltol6_1",
+      "variable_description": "Glucose tolerance according to WHO 1997",
+      "reported_unit": "",
+      "exploratory_measurement_judgment": "no",
+      "classifier": "ambiguous"
+    },
+    {
+      "variable_id": "phv00252528.v2",
+      "variable_name": "Urine_GLU",
+      "variable_description": "Qualitative Glucose",
+      "reported_unit": "",
+      "exploratory_measurement_judgment": "yes",
+      "classifier": "ambiguous"
+    },
+    {
+      "variable_id": "phv00163247.v3",
+      "variable_name": "glur",
+      "variable_description": "Glucose mg/dL",
+      "reported_unit": "mg/dL",
+      "exploratory_measurement_judgment": "yes",
+      "classifier": "likely_measurement"
+    },
+    {
+      "variable_id": "phv00190340.v3",
+      "variable_name": "age_at_fasting_glucose",
+      "variable_description": "Age at fasting glucose",
+      "reported_unit": "",
+      "exploratory_measurement_judgment": "no",
+      "classifier": "likely_measurement"
+    },
+    {
+      "variable_id": "phv00033344.v1",
+      "variable_name": "VAL29A31",
+      "variable_description": "Pre-supper blood glucose mg/dl (quarterly visit 31)",
+      "reported_unit": "MG/DL",
+      "exploratory_measurement_judgment": "yes",
+      "classifier": "likely_measurement"
+    },
+    {
+      "variable_id": "phv00500410.v1",
+      "variable_name": "GLYCEMIC_LOAD_GLUCOSE_REF_NDSR",
+      "variable_description": "Glycemic load (glucose reference)",
+      "reported_unit": "proportion of total avail carb X ingr GI",
+      "exploratory_measurement_judgment": "no",
+      "classifier": "ambiguous"
+    },
+    {
+      "variable_id": "phv00001392.v1",
+      "variable_name": "FC36",
+      "variable_description": "GLUCOSE CHALLENGE: TIME OF LAST EATING. HOUR",
+      "reported_unit": "",
+      "exploratory_measurement_judgment": "no",
+      "classifier": "non_measurement_context"
+    },
+    {
+      "variable_id": "phv00421368.v1",
+      "variable_name": "pheno_250.42",
+      "variable_description": "Other abnormal glucose",
+      "reported_unit": "",
+      "exploratory_measurement_judgment": "no",
+      "classifier": "ambiguous"
+    },
+    {
+      "variable_id": "phv00001578.v1",
+      "variable_name": "FD33",
+      "variable_description": "GLUCOSE CHALLENGE: TIME GLUCOSE GIVEN, MINUTE",
+      "reported_unit": "MINUTE",
+      "exploratory_measurement_judgment": "no",
+      "classifier": "non_measurement_context"
+    },
+    {
+      "variable_id": "phv00370341.v1",
+      "variable_name": "OtherBloodWorkGlucose",
+      "variable_description": "Day 1. Laboratory results: Other Blood work. Glucose [ATS Baseline Investigation Results Form]",
+      "reported_unit": "",
+      "exploratory_measurement_judgment": "yes",
+      "classifier": "ambiguous"
+    },
+    {
+      "variable_id": "phv00265393.v1",
+      "variable_name": "FAST_GLU",
+      "variable_description": "Fasting glucose",
+      "reported_unit": "mmol/l",
+      "exploratory_measurement_judgment": "yes",
+      "classifier": "likely_measurement"
+    },
+    {
+      "variable_id": "phv00110354.v1",
+      "variable_name": "ADMMIN12",
+      "variable_description": "MINUTE GLUCOSE ADMINISTERED",
+      "reported_unit": "",
+      "exploratory_measurement_judgment": "no",
+      "classifier": "non_measurement_context"
+    },
+    {
+      "variable_id": "phv00363135.v1",
+      "variable_name": "Glucose",
+      "variable_description": "Glucose mgdL [LABORATORY (CBC, Differential, Chemistry, Coagulation, Misc.)]",
+      "reported_unit": "mg/dL",
+      "exploratory_measurement_judgment": "yes",
+      "classifier": "likely_measurement"
+    },
+    {
+      "variable_id": "phv00066526.v1",
+      "variable_name": "igt",
+      "variable_description": "Impaired glucose tolerance",
+      "reported_unit": "",
+      "exploratory_measurement_judgment": "no",
+      "classifier": "ambiguous"
+    },
+    {
+      "variable_id": "phv00525616.v1",
+      "variable_name": "DM_s",
+      "variable_description": "Diabetic if fasting glucose >=126 mg/dL; non-fasting glucose >= 200 mg/dL or pills or insulin at follow-up",
+      "reported_unit": "",
+      "exploratory_measurement_judgment": "no",
+      "classifier": "likely_measurement"
+    },
+    {
+      "variable_id": "phv00556069.v1",
+      "variable_name": "random_glucose_mgdl",
+      "variable_description": "Random blood glucose (mg/dl) at time of recruitment",
+      "reported_unit": "mg/dl",
+      "exploratory_measurement_judgment": "yes",
+      "classifier": "likely_measurement"
+    },
+    {
+      "variable_id": "phv00001574.v1",
+      "variable_name": "FD29",
+      "variable_description": "GLUCOSE CHALLENGE: TIME OF LAST EATING, HOUR",
+      "reported_unit": "HOUR",
+      "exploratory_measurement_judgment": "no",
+      "classifier": "non_measurement_context"
+    },
+    {
+      "variable_id": "phv00504749.v1",
+      "variable_name": "BMK_glucose",
+      "variable_description": "Glucose",
+      "reported_unit": "mmol/L",
+      "exploratory_measurement_judgment": "yes",
+      "classifier": "ambiguous"
+    }
+  ]
+}

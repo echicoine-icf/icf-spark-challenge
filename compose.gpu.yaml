@@ -3,3 +3,6 @@
 services:
   ollama:
     gpus: all
+
+  sapbert:
+    gpus: all

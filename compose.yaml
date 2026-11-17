@@ -9,7 +9,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-spark_local_dev_only}
       POSTGRES_DB: ${POSTGRES_DB:-spark}
     ports:
-      - "127.0.0.1:${POSTGRES_PORT:-5434}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-15432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./database/init:/docker-entrypoint-initdb.d:ro
@@ -27,10 +27,17 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-spark}:${POSTGRES_PASSWORD:-spark_local_dev_only}@db:5432/${POSTGRES_DB:-spark}
     ports:
-      - "127.0.0.1:${API_PORT:-8000}:8000"
+      - "127.0.0.1:${API_PORT:-18080}:8000"
     volumes:
       - ./backend/app:/app/app:ro
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    # The app binds after Python imports and PostgreSQL initialization; container 'started' is not enough.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3).read()"]
+      interval: 3s
+      timeout: 5s
+      retries: 25
+      start_period: 10s
     depends_on:
       db:
         condition: service_healthy
@@ -57,16 +64,215 @@ services:
     entrypoint: ["python", "-m", "app.inspect_corpus"]
     command: ["--root", "/corpus", "--report", "/reports/corpus_inventory.json", "--max-files", "30000"]
 
+  corpus-import:
+    build:
+      context: ./backend
+    profiles: ["tools"]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-spark}:${POSTGRES_PASSWORD:-spark_local_dev_only}@db:5432/${POSTGRES_DB:-spark}
+    volumes:
+      - corpus_data:/corpus:ro
+      - ./database/migrations:/migrations:ro
+    command: ["python", "-m", "app.import_corpus", "--limit-studies", "5"]
+    depends_on:
+      db:
+        condition: service_healthy
+
+  corpus-audit:
+    build:
+      context: ./backend
+    profiles: ["tools"]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-spark}:${POSTGRES_PASSWORD:-spark_local_dev_only}@db:5432/${POSTGRES_DB:-spark}
+    volumes:
+      - corpus_data:/corpus:ro
+      - ./reports:/reports
+    entrypoint: ["python", "-m", "app.audit_corpus"]
+    command: ["--strict"]
+    depends_on:
+      db:
+        condition: service_healthy
+
+  corpus-search-index:
+    build:
+      context: ./backend
+    profiles: ["tools"]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-spark}:${POSTGRES_PASSWORD:-spark_local_dev_only}@db:5432/${POSTGRES_DB:-spark}
+    volumes:
+      - ./database/migrations:/migrations:ro
+    command: ["python", "-m", "app.build_search_indexes"]
+    depends_on:
+      db:
+        condition: service_healthy
+
+  corpus-search-benchmark:
+    build:
+      context: ./backend
+    profiles: ["tools"]
+    volumes:
+      - ./reports:/reports
+    entrypoint: ["python", "-m", "app.benchmark_search"]
+    depends_on:
+      api:
+        condition: service_healthy
+
   ollama:
     image: ollama/ollama:latest
     profiles: ["ai"]
     restart: unless-stopped
     ports:
-      - "127.0.0.1:${OLLAMA_PORT:-11434}:11434"
+      - "127.0.0.1:${OLLAMA_PORT:-11435}:11434"
     volumes:
       - ollama_data:/root/.ollama
     # CPU configuration. GPU support is opt-in via compose.gpu.yaml.
 
+  ontology-fetch:
+    build:
+      context: ./backend
+    profiles: ["tools"]
+    volumes:
+      - ./knowledge:/knowledge
+    entrypoint: ["python", "-m", "app.download_ontology"]
+
+  ontology-import:
+    build:
+      context: ./backend
+    profiles: ["tools"]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-spark}:${POSTGRES_PASSWORD:-spark_local_dev_only}@db:5432/${POSTGRES_DB:-spark}
+    volumes:
+      - ./knowledge:/knowledge:ro
+      - ./database/migrations:/migrations:ro
+    entrypoint: ["python", "-m", "app.import_ontology"]
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # Milestone 5E: offline LOINC / prescribable RxNorm import; user supplies
+  # licensed upstream release ZIPs in ./knowledge (never embedded in Git).
+  terminology-import:
+    build:
+      context: ./backend
+    profiles: ["tools"]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-spark}:${POSTGRES_PASSWORD:-spark_local_dev_only}@db:5432/${POSTGRES_DB:-spark}
+    volumes:
+      - ./knowledge:/knowledge:ro
+      - ./database/migrations:/migrations:ro
+    entrypoint: ["python", "-m", "app.import_terminology"]
+    depends_on:
+      db:
+        condition: service_healthy
+
+  ontology-benchmark:
+    build:
+      context: ./backend
+    profiles: ["tools"]
+    volumes:
+      - ./reports:/reports
+    entrypoint: ["python", "-m", "app.benchmark_ontology"]
+    depends_on:
+      api:
+        condition: service_healthy
+
+
+
+  # Milestone 5C: downloader is online PREPARATION ONLY; runtime never downloads.
+  sapbert-fetch:
+    build:
+      context: ./model_server
+      dockerfile: Dockerfile.fetch
+    profiles: ["tools"]
+    volumes:
+      - ./models/sapbert:/models/sapbert
+    entrypoint: ["python", "download_model.py"]
+
+  # Optional offline SapBERT inference (CPU by default, CUDA 12.8 GPU with compose.gpu.yaml).
+  sapbert:
+    build:
+      context: ./model_server
+    profiles: ["ai"]
+    environment:
+      SAPBERT_MODEL_DIR: /models/sapbert
+      SAPBERT_DEVICE: ${SAPBERT_DEVICE:-auto}
+      SAPBERT_REVISION: ${SAPBERT_REVISION:-}
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+    ports:
+      - "127.0.0.1:${SAPBERT_PORT:-18082}:8000"
+    volumes:
+      - ./models/sapbert:/models/sapbert:ro
+
+  ontology-embed-index:
+    build:
+      context: ./backend
+    profiles: ["tools"]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-spark}:${POSTGRES_PASSWORD:-spark_local_dev_only}@db:5432/${POSTGRES_DB:-spark}
+      SAPBERT_URL: http://sapbert:8000
+    entrypoint: ["python", "-m", "app.index_ontology_embeddings"]
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # Milestone 5G: offline proposals and explicit local human review. No model download.
+  variable-annotation-worker:
+    build:
+      context: ./backend
+    profiles: ["tools"]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-spark}:${POSTGRES_PASSWORD:-spark_local_dev_only}@db:5432/${POSTGRES_DB:-spark}
+    volumes:
+      - ./reports:/reports
+    entrypoint: ["python", "-m", "app.variable_annotations"]
+    depends_on:
+      db:
+        condition: service_healthy
+
+  variable-annotation-benchmark:
+    build:
+      context: ./backend
+    profiles: ["tools"]
+    volumes:
+      - ./reports:/reports
+    entrypoint: ["python", "-m", "app.benchmark_variable_annotations"]
+    depends_on:
+      api:
+        condition: service_healthy
+
+  typed-retrieval-benchmark:
+    build:
+      context: ./backend
+    profiles: ["tools"]
+    volumes:
+      - ./reports:/reports
+    entrypoint: ["python", "-m", "app.benchmark_typed_retrieval"]
+    depends_on:
+      api:
+        condition: service_healthy
+
+  ontology-normalization-benchmark:
+    build:
+      context: ./backend
+    profiles: ["tools"]
+    entrypoint: ["python", "-m", "app.benchmark_normalization"]
+    volumes:
+      - ./reports:/reports
+    depends_on:
+      api:
+        condition: service_healthy
+
+  sapbert-benchmark:
+    build:
+      context: ./backend
+    profiles: ["tools"]
+    entrypoint: ["python", "-m", "app.benchmark_sapbert"]
+    volumes:
+      - ./reports:/reports
+    depends_on:
+      api:
+        condition: service_healthy
 volumes:
   postgres_data:
   corpus_data:
