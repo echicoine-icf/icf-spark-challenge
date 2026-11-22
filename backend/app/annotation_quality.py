@@ -17,7 +17,7 @@ import os
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from app import variable_annotations as annotations
+from . import variable_annotations as annotations
 
 AUDIT_VERSION = 'variable_quality_audit_v1'
 CLASSES = ('likely_measurement', 'ambiguous', 'non_measurement_context')
@@ -59,7 +59,7 @@ def _diverse_sample(rows: list[dict], per_class: int, seed: str) -> list[dict]:
 
 
 def create_batch(cur, concept_id: str, *, per_class: int = 15,
-                 seed: str = 'spark-5g2') -> dict:
+                 seed: str = 'spark-5g2', exclude_study_ids: frozenset[str] | None = None) -> dict:
     """Read-only, bounded sampling from ORIGINAL public dbGaP dictionary rows."""
     code = annotations.identifier(concept_id)
     if code.split(':')[0] != 'LOINC':
@@ -79,7 +79,12 @@ def create_batch(cur, concept_id: str, *, per_class: int = 15,
     raw = cur.fetchall()
     by_class: dict[str, list[dict]] = {label: [] for label in CLASSES}
     seen: set[tuple[str, str]] = set()
+    exclusions = exclude_study_ids or frozenset()
+    if not all(isinstance(sid, str) and sid for sid in exclusions):
+        raise ValueError('Invalid study exclusion set')
     for variable in raw[:cap]:
+        if variable['study_id'] in exclusions:
+            continue
         key = (variable['dataset_id'], variable['variable_id'])
         if key in seen:
             continue
@@ -97,6 +102,7 @@ def create_batch(cur, concept_id: str, *, per_class: int = 15,
             'variable_name': variable.get('variable_name') or '',
             'variable_description': variable.get('variable_description') or '',
             'unit': variable.get('unit') or '',
+            'reported_type': variable.get('reported_type') or '',
             'source_path': variable['source_path'],
             'concept_id': code, 'concept_label': concept['label'],
             **{'loinc_' + key: str((concept.get('attributes') or {}).get(key) or '')
@@ -126,6 +132,8 @@ def create_batch(cur, concept_id: str, *, per_class: int = 15,
         'class_counts_in_bounded_pool': {label: len(by_class[label]) for label in CLASSES},
         'class_counts_selected': dict(Counter(r['candidate_classification'] for r in selected)),
         'selected_study_count': len({r['study_id'] for r in selected}),
+        'excluded_study_count': len(exclusions),
+        'excluded_studies_in_candidate_pool': sum(r['study_id'] in exclusions for r in raw[:cap]),
         'rows': selected,
         'interpretation': 'Blinded stratified quality pilot. Not an exhaustive corpus sample, '
                           'not sensitivity/recall, and not clinical validation; no reviews are approved.',

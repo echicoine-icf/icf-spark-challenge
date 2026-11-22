@@ -25,6 +25,14 @@ from app.quality_search import (
 
 app = FastAPI(title="ICF SPARK dbGaP API", version="0.1.0")
 
+# M7_MEDGEMMA_CHAT_ROUTE
+from app.concierge import router as medgemma_chat_router
+app.include_router(medgemma_chat_router)
+
+# SPARK_M72_RESOURCE_EXPLORER_ROUTE
+from app.resource_explorer import router as resource_explorer_router
+app.include_router(resource_explorer_router)
+
 
 def db_connection():
     return psycopg.connect(os.environ["DATABASE_URL"], connect_timeout=5, row_factory=dict_row)
@@ -401,6 +409,9 @@ class TypedStudySearchRequest(BaseModel):
     max_expansions: int = Field(default=4, ge=0, le=5)
     evidence_per_requirement: int = Field(default=1, ge=0, le=3)
     include_reviewed_annotations: bool = False
+    include_measurement_candidates: bool = False
+    measurement_candidate_limit: int = Field(default=10, ge=1, le=30)
+    measurement_candidate_ranking: Literal['lexical', 'source_evidence'] = 'lexical'
 
 
 @app.post('/api/v1/search/typed')
@@ -415,7 +426,10 @@ def typed_study_search(request: TypedStudySearchRequest):
                 max_expansions=request.max_expansions,
                 match_mode=request.match_mode,
                 evidence_per_requirement=request.evidence_per_requirement,
-                include_reviewed_annotations=request.include_reviewed_annotations)
+                include_reviewed_annotations=request.include_reviewed_annotations,
+                include_measurement_candidates=request.include_measurement_candidates,
+                measurement_candidate_limit=request.measurement_candidate_limit,
+                measurement_candidate_ranking=request.measurement_candidate_ranking)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except RuntimeError as exc:
@@ -432,11 +446,11 @@ def annotation_candidates(
     concept_id: str | None = Query(None, max_length=30),
     study_id: str | None = Query(None, max_length=120),
     limit: int = Query(30, ge=1, le=100),
-    matcher_version: Literal['variable_kind_axes_v3', 'variable_precision_rules_v2',
-                             'variable_anchor_rules_v1', 'all'] = 'variable_kind_axes_v3',
+    matcher_version: Literal['variable_kind_axes_v4', 'variable_kind_axes_v3', 'variable_precision_rules_v2',
+                             'variable_anchor_rules_v1', 'all'] = 'variable_kind_axes_v4',
     classification: Literal['likely_measurement', 'ambiguous',
                             'terminology_mention'] | None = None,
-    variable_kind: Literal['analyte_measurement', 'derived_diagnosis',
+    variable_kind: Literal['analyte_measurement', 'monitoring_adherence', 'result_unit_metadata', 'derived_diagnosis',
                           'test_performed_indicator', 'administration_or_dose',
                           'timing_metadata', 'dietary_metric',
                           'uncertain_variable_kind'] | None = None,
@@ -508,3 +522,23 @@ LIMIT %(cap)s
             'count_in_page':len(rows),
             'bounded':True, 'candidates':rows,
             'interpretation':'Unreviewed candidates are NOT confirmed mappings or study-search evidence.'}
+
+
+@app.get('/api/v1/annotations/loinc-alternatives')
+def annotation_loinc_alternatives(
+    annotation_id: int = Query(..., ge=1),
+    limit: int = Query(10, ge=1, le=20),
+):
+    """Read-only, evidence-ranked SAME-ANALYTE LOINC review suggestions.
+
+    This never creates an annotation, approval, or study-search evidence.
+    """
+    from app.loinc_alternatives import find_alternatives
+    try:
+        with db_connection() as conn, conn.cursor() as cur:
+            return find_alternatives(cur, annotation_id, limit=limit)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except psycopg.Error as exc:
+        raise HTTPException(status_code=503,
+            detail=f'LOINC alternative lookup unavailable: {type(exc).__name__}') from exc

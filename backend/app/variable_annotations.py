@@ -1,4 +1,4 @@
-"""Milestone 5G.3: variable-kind and independent LOINC compatibility proposals.
+"""Milestone 5G.4: variable-role and independent LOINC compatibility proposals.
 
 A full word/term mention is a discovery candidate, *never* a clinical equivalence.
 Even an exact LOINC name on a variable needs review because specimen/method or
@@ -18,7 +18,7 @@ import re
 import sys
 from pathlib import Path
 
-MATCHER_VERSION = 'variable_kind_axes_v3'
+MATCHER_VERSION = 'variable_kind_axes_v4'
 FETCH_MULTIPLIER = 12
 MAX_FETCH_ROWS = 12000
 SUPPORTED = {'LOINC': 'laboratory_measurement', 'RXNORM': 'medication', 'MONDO': 'disease'}

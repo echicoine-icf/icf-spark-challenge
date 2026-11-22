@@ -1,0 +1,16 @@
+# M7 additive UI and MedGemma wiring. Always combine with compose.yaml.
+# The existing API/database/corpus services and volumes remain untouched.
+services:
+  api:
+    environment:
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
+      MEDGEMMA_MODEL: ${MEDGEMMA_MODEL:-medgemma1.5}
+  chat-ui:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.chat
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${CHAT_PORT:-18081}:80"
+    depends_on:
+      - api

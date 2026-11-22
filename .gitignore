@@ -1,36 +1,61 @@
+# Local configuration and credentials (commit only example files).
 .env
 .env.*
 !.env.example
+
+# Python environments, caches, coverage and test output.
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
 .venv/
+venv/
+
+# Frontend dependencies and build output. Keep package lockfiles tracked.
+node_modules/
+dist/
+build/
+.vite/
+
+# Editor / IDE state.
 .vscode/
 .idea/
-# NIH corpus and generated data should never be committed.
+
+# NIH corpus, imported/generated data and local reports.
 *.tar.gz
 *.tgz
 corpus/
 data/
 reports/*
 !reports/.gitkeep
+*.sqlite3
+*.db
+
+# Locally downloaded model weights and ontology resources.
 models/weights/
+/models/sapbert/
 *.gguf
 *.safetensors
 *.onnx
 *.pt
 *.pth
 *.bin
-*.sqlite3
-*.db
-
-# Downloaded licensed/versioned ontology assets and receipts (local only).
 knowledge/*
 !knowledge/.gitkeep
 
-# Deployment-local artifact lock contains paths/hashes; ship with approved artifact bundle instead.
+# Machine-specific artifact lock; distribute with approved asset bundle.
 deployment/artifacts.lock.json
 
-# Milestone 5C — frozen local SapBERT snapshots and Hugging Face download cache.
-# Keep the model receipt/checksums in the submission asset bundle, not in Git.
-/models/sapbert/
+# Historical development snapshots; current technical docs stay tracked.
+/MILESTONE_*_MANIFEST.json
+/MILESTONE_*.md
+/LOCAL_LLM_ANNOTATION*.md
+/AI_PROVISIONAL_DEVELOPMENT_*.md
+/M[0-9]*_PROGRESS_APPEND.md
+/M[0-9]*_RUNBOOK_APPEND.md
+/KNOWLEDGE_ATTRIBUTION_TEMPLATE.md
+
+# Local root-level patch archives, not application sources.
+/*.zip

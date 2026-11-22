@@ -636,10 +636,541 @@ def main(argv: list[str] | None = None) -> int:
     qa.add_argument('--seed', default='spark-5g2')
     actions.add_parser('annotation-quality-score',
         help='Score two independent review CSVs without modifying annotations or search')
+    llmcheck = actions.add_parser('annotation-llm-check',
+        help='Confirm an EXACT locally installed Ollama model and record its digest; no pulls')
+    llmcheck.add_argument('--model', required=True, help='Exact name returned by Ollama /api/tags')
+    llmcheck.add_argument('--ollama-url', help='HTTP loopback origin; default 127.0.0.1:${OLLAMA_PORT:-11435}')
+    llmrun = actions.add_parser('annotation-llm-run',
+        help='Run bounded, blinded, LOCAL-ONLY role-first 5H.1.1 annotation pilot; no DB writes')
+    llmrun.add_argument('--model', required=True)
+    llmrun.add_argument('--ollama-url')
+    llmrun.add_argument('--batch', type=Path, default=ROOT / 'reports' / 'annotation_quality_batch.json')
+    llmrun.add_argument('--output', type=Path, default=ROOT / 'reports' / 'llm_annotation_experiment_5h11.json')
+    llmrun.add_argument('--per-class', type=int, default=3, help='1..15 per stratum; default 9 total')
+    llmrun.add_argument('--seed', type=int, default=42)
+    llmrun.add_argument('--timeout', type=int, default=180)
+    llmrun.add_argument('--resume', action='store_true')
+    llmscore = actions.add_parser('annotation-llm-score',
+        help='Compare LLM vs v4 rules against exploratory 45-row labels, NOT independent validation')
+    llmscore.add_argument('--run', type=Path, default=ROOT / 'reports' / 'llm_annotation_experiment_5h11.json')
+    llmscore.add_argument('--reference', type=Path,
+                          default=ROOT / 'tests' / 'fixtures' / '5h_exploratory_reference_45.csv')
+    llmscore.add_argument('--output', type=Path, default=ROOT / 'reports' / 'llm_annotation_comparison_5h11.json')
+    role_run = actions.add_parser('annotation-role-run',
+        help='5H.1.2 isolated role-only local Ollama pilot; NO ontology code prompt or writes')
+    role_run.add_argument('--model', required=True)
+    role_run.add_argument('--ollama-url')
+    role_run.add_argument('--batch', type=Path, default=ROOT / 'reports' / 'annotation_quality_batch.json')
+    role_run.add_argument('--output', type=Path, default=ROOT / 'reports' / 'llm_role_only_experiment_5h12.json')
+    role_run.add_argument('--per-class', type=int, default=3)
+    role_run.add_argument('--seed', type=int, default=42)
+    role_run.add_argument('--timeout', type=int, default=None,
+                          help='HTTP timeout seconds (default: off 180, on 900)')
+    role_run.add_argument('--think', choices=['on', 'off'], default='off',
+                          help='Explicit Ollama reasoning mode (default: off)')
+    role_run.add_argument('--num-predict', type=int, default=None,
+                          help='Output token cap INCLUDING reasoning (default: off 512, on 8192)')
+    role_run.add_argument('--num-ctx', type=int, default=None,
+                          help='Context token cap (default: off 4096, on 16384)')
+    role_run.add_argument('--resume', action='store_true')
+    role_score = actions.add_parser('annotation-role-score',
+        help='Score source-only role judgments against exploratory reference; not clinical validation')
+    role_score.add_argument('--run', type=Path, default=ROOT / 'reports' / 'llm_role_only_experiment_5h12.json')
+    role_score.add_argument('--reference', type=Path,
+                            default=ROOT / 'tests' / 'fixtures' / '5h_exploratory_reference_45.csv')
+    role_score.add_argument('--output', type=Path, default=ROOT / 'reports' / 'llm_role_only_comparison_5h12.json')
+    binary_run = actions.add_parser('annotation-binary-run',
+        help='5H.2 read-only binary-first local Ollama measurement classification pilot')
+    binary_run.add_argument('--model', default='qwen2.5:7b-instruct',
+        help='Exact local Ollama model; default Qwen2.5-7B-Instruct')
+    binary_run.add_argument('--ollama-url')
+    binary_run.add_argument('--batch', type=Path, default=ROOT / 'reports' / 'annotation_quality_batch.json')
+    binary_run.add_argument('--output', type=Path, default=ROOT / 'reports' / 'llm_binary_first_qwen25_7b.json')
+    binary_run.add_argument('--per-class', type=int, default=3)
+    binary_run.add_argument('--seed', type=int, default=42)
+    binary_run.add_argument('--think', choices=['on', 'off'], default='off')
+    binary_run.add_argument('--num-predict', type=int, default=None)
+    binary_run.add_argument('--num-ctx', type=int, default=None)
+    binary_run.add_argument('--timeout', type=int, default=None)
+    binary_run.add_argument('--temperature', type=float, default=0.0)
+    binary_run.add_argument('--review-lock', type=Path,
+        help='Required for study-disjoint holdout; locked reviewer reference, frozen before inference')
+    binary_run.add_argument('--resume', action='store_true')
+    binary_score = actions.add_parser('annotation-binary-score',
+        help='Score binary-first pilot versus development labels only; not clinical validation')
+    binary_score.add_argument('--run', type=Path, default=ROOT / 'reports' / 'llm_binary_first_qwen25_7b.json')
+    binary_score.add_argument('--reference', type=Path,
+        default=ROOT / 'tests' / 'fixtures' / '5h_exploratory_reference_45.csv')
+    binary_score.add_argument('--output', type=Path,
+        default=ROOT / 'reports' / 'llm_binary_first_qwen25_7b_score.json')
+    adj = actions.add_parser('annotation-binary-adjudicate',
+        help='5H.3 repair source-grounded evidence and selectively retry uncertain/disputed binary classifications')
+    adj.add_argument('--run', type=Path, required=True, help='Original unmodified 5H.2.1 binary-first report')
+    adj.add_argument('--batch', type=Path, default=ROOT / 'reports' / 'holdout_5h21' / 'annotation_quality_batch.json')
+    adj.add_argument('--review-lock', type=Path, default=ROOT / 'reports' / 'holdout_5h21' / 'ai_provisional_reference.json')
+    adj.add_argument('--output', type=Path, required=True, help='New, separate 5H.3 adjudicated report path')
+    adj.add_argument('--retry-mode', choices=['selective','off'], default='selective')
+    adj.add_argument('--max-model-calls', type=int, default=90)
+    adj.add_argument('--resume', action='store_true')
+    holdout_sample = actions.add_parser('annotation-holdout-sample',
+        help='Read-only study-disjoint original-variable holdout and blinded review sheets')
+    holdout_sample.add_argument('--per-class', type=int, default=15)
+    holdout_sample.add_argument('--seed', default='spark-5h21-holdout')
+    holdout_freeze = actions.add_parser('annotation-holdout-freeze', help='Freeze two human reviewers, or a separate AI-provisional development reference')
+    holdout_freeze.add_argument('--ai-provisional', action='store_true', help='Use single AI-labeled ai_provisional.csv; cannot claim independent validation')
+    holdout_score = actions.add_parser('annotation-holdout-score',
+        help='Score a complete 7B binary-first run against frozen agreed reviewer labels')
+    holdout_score.add_argument('--reference', type=Path, default=ROOT / 'reports' / 'holdout_5h21' / 'holdout_reference.json', help='Frozen human reference or explicitly AI-provisional reference')
+    holdout_score.add_argument('--run', type=Path, default=ROOT / 'reports' / 'holdout_5h21' / 'qwen25_7b_holdout.json')
+    holdout_score.add_argument('--output', type=Path, default=ROOT / 'reports' / 'holdout_5h21' / 'qwen25_7b_holdout_score.json')
+    # 5H.4: standalone, source-only local guidance retrieval experiment. Never
+    # changes 5H.2/5H.3 scoring, annotations, database, or ontology mappings.
+    rag_preview = actions.add_parser('annotation-rag-preview',
+        help='5H.4 offline preview of unreviewed guidance retrieval; no Ollama calls')
+    rag_preview.add_argument('--batch', type=Path,
+        default=ROOT / 'reports' / 'holdout_5h21' / 'annotation_quality_batch.json')
+    rag_preview.add_argument('--knowledge', type=Path,
+        default=ROOT / 'knowledge' / 'annotation_role_guidance_5h4.json')
+    rag_preview.add_argument('--per-class', type=int, default=3)
+    rag_preview.add_argument('--top-k', type=int, default=5)
+    rag_run = actions.add_parser('annotation-rag-run',
+        help='5H.4 local-only RAG-guided Qwen binary-first experiment; NO database writes')
+    rag_run.add_argument('--model', default='qwen2.5:7b-instruct')
+    rag_run.add_argument('--ollama-url', help='Explicit HTTP loopback origin; defaults to OLLAMA_PORT')
+    rag_run.add_argument('--batch', type=Path,
+        default=ROOT / 'reports' / 'holdout_5h21' / 'annotation_quality_batch.json')
+    rag_run.add_argument('--knowledge', type=Path,
+        default=ROOT / 'knowledge' / 'annotation_role_guidance_5h4.json')
+    rag_run.add_argument('--review-lock', type=Path,
+        default=ROOT / 'reports' / 'holdout_5h21' / 'ai_provisional_reference.json')
+    rag_run.add_argument('--output', type=Path,
+        default=ROOT / 'reports' / 'holdout_5h21' / 'qwen25_7b_rag_5h4.json')
+    rag_run.add_argument('--per-class', type=int, default=3)
+    rag_run.add_argument('--top-k', type=int, default=5)
+    rag_run.add_argument('--seed', type=int, default=42)
+    rag_run.add_argument('--think', choices=['on','off'], default='off')
+    rag_run.add_argument('--num-predict', type=int)
+    rag_run.add_argument('--num-ctx', type=int)
+    rag_run.add_argument('--timeout', type=int)
+    rag_run.add_argument('--temperature', type=float, default=0.0)
+    # 5H.5: asynchronous SQLite revisit queue with opt-in, low-rate NCI EVS fetch.
+    adaptive = actions.add_parser('annotation-adaptive-rag-run',
+        help='5H.5 bounded asynchronous EVS enrichment + source-validated Qwen revisit; development only')
+    adaptive.add_argument('--model', default='qwen2.5:7b-instruct')
+    adaptive.add_argument('--ollama-url', help='Existing loopback Ollama URL')
+    adaptive.add_argument('--batch', type=Path,
+        default=ROOT / 'reports' / 'holdout_5h21' / 'annotation_quality_batch.json')
+    adaptive.add_argument('--review-lock', type=Path,
+        default=ROOT / 'reports' / 'holdout_5h21' / 'ai_provisional_reference.json')
+    adaptive.add_argument('--knowledge', type=Path,
+        default=ROOT / 'knowledge' / 'annotation_role_guidance_5h4.json')
+    adaptive.add_argument('--queue', type=Path,
+        default=ROOT / 'reports' / 'holdout_5h21' / 'adaptive_5h5_queue.sqlite3')
+    adaptive.add_argument('--output', type=Path,
+        default=ROOT / 'reports' / 'holdout_5h21' / 'qwen25_7b_adaptive_5h5.json')
+    adaptive.add_argument('--per-class', type=int, default=3)
+    adaptive.add_argument('--top-k', type=int, default=5)
+    adaptive.add_argument('--seed', type=int, default=42)
+    adaptive.add_argument('--think', choices=['on','off'], default='off')
+    adaptive.add_argument('--num-ctx', type=int)
+    adaptive.add_argument('--num-predict', type=int)
+    adaptive.add_argument('--timeout', type=int)
+    adaptive.add_argument('--temperature', type=float, default=0.0)
+    adaptive.add_argument('--online', action='store_true',
+        help='Opt in to PUBLIC NCI EVS requests; only allowlisted concept terms leave host')
+    adaptive.add_argument('--max-requests', type=int, default=6)
+    adaptive.add_argument('--rate-seconds', type=float, default=1.0)
+    adaptive.add_argument('--wait-seconds', type=float, default=30.0)
+    adaptive.add_argument('--resume', action='store_true')
+    # 5H.6: separately versioned multi-source enrichment (5H.5 stays unchanged).
+    multi = actions.add_parser('annotation-multisource-rag-run',
+        help='5H.6 EVS + NLM Clinical Tables + optional UMLS adaptive RAG pilot')
+    multi.add_argument('--model', default='qwen2.5:7b-instruct')
+    multi.add_argument('--ollama-url')
+    multi.add_argument('--batch', type=Path,
+        default=ROOT / 'reports' / 'holdout_5h21' / 'annotation_quality_batch.json')
+    multi.add_argument('--review-lock', type=Path,
+        default=ROOT / 'reports' / 'holdout_5h21' / 'ai_provisional_reference.json')
+    multi.add_argument('--knowledge', type=Path,
+        default=ROOT / 'knowledge' / 'annotation_role_guidance_5h4.json')
+    multi.add_argument('--queue', type=Path,
+        default=ROOT / 'reports' / 'holdout_5h21' / 'multisource_5h6_queue.sqlite3')
+    multi.add_argument('--output', type=Path,
+        default=ROOT / 'reports' / 'holdout_5h21' / 'qwen25_7b_multisource_5h6.json')
+    multi.add_argument('--sources', default='evs,nlm_loinc,nlm_disease',
+        help='Comma-separated: evs,nlm_loinc,nlm_disease,umls. UMLS requires env UMLS_API_KEY')
+    multi.add_argument('--per-class', type=int, default=3)
+    multi.add_argument('--top-k', type=int, default=5)
+    multi.add_argument('--seed', type=int, default=42)
+    multi.add_argument('--think', choices=['on','off'], default='off')
+    multi.add_argument('--num-predict', type=int)
+    multi.add_argument('--num-ctx', type=int)
+    multi.add_argument('--timeout', type=int)
+    multi.add_argument('--temperature', type=float, default=0.0)
+    multi.add_argument('--online', action='store_true')
+    multi.add_argument('--max-requests', type=int, default=12)
+    multi.add_argument('--rate-seconds', type=float, default=1.0)
+    multi.add_argument('--wait-seconds', type=float, default=30.0)
+    multi.add_argument('--resume', action='store_true')
+    rag_run.add_argument('--resume', action='store_true')
+    # 5H.7: context-specific query planning, independent of the 5H.6 queue/reports.
+    context_preview = actions.add_parser('annotation-contextual-rag-preview',
+        help='5H.7 offline preview of exact public API terms; no HTTP/model/database')
+    context_preview.add_argument('--batch', type=Path,
+        default=ROOT / 'reports' / 'holdout_5h21' / 'annotation_quality_batch.json')
+    context_preview.add_argument('--per-class', type=int, default=15)
+    context_preview.add_argument('--sources',default='evs,nlm_loinc,nlm_disease,umls')
+    context_run = actions.add_parser('annotation-contextual-rag-run',
+        help='5H.7 bounded contextual-search multi-source RAG revisit experiment')
+    context_run.add_argument('--model',default='qwen2.5:7b-instruct')
+    context_run.add_argument('--ollama-url')
+    context_run.add_argument('--batch',type=Path,
+        default=ROOT / 'reports' / 'holdout_5h21' / 'annotation_quality_batch.json')
+    context_run.add_argument('--review-lock',type=Path,
+        default=ROOT / 'reports' / 'holdout_5h21' / 'ai_provisional_reference.json')
+    context_run.add_argument('--knowledge',type=Path,
+        default=ROOT / 'knowledge' / 'annotation_role_guidance_5h4.json')
+    context_run.add_argument('--queue',type=Path,
+        default=ROOT / 'reports' / 'holdout_5h21' / 'contextual_5h7_queue.sqlite3')
+    context_run.add_argument('--output',type=Path,
+        default=ROOT / 'reports' / 'holdout_5h21' / 'qwen25_7b_contextual_5h7.json')
+    context_run.add_argument('--sources',default='evs,nlm_loinc,nlm_disease,umls')
+    context_run.add_argument('--per-class',type=int,default=15)
+    context_run.add_argument('--top-k',type=int,default=5)
+    context_run.add_argument('--seed',type=int,default=42)
+    context_run.add_argument('--think',choices=['on','off'],default='off')
+    context_run.add_argument('--num-ctx',type=int)
+    context_run.add_argument('--num-predict',type=int)
+    context_run.add_argument('--timeout',type=int)
+    context_run.add_argument('--temperature',type=float,default=0.)
+    context_run.add_argument('--online',action='store_true')
+    context_run.add_argument('--max-requests',type=int,default=80)
+    context_run.add_argument('--rate-seconds',type=float,default=1.)
+    context_run.add_argument('--wait-seconds',type=float,default=120.)
+    context_run.add_argument('--resume',action='store_true')
+    # 5H.8: offline-only bulk biomedical knowledge preparation and evaluation.
+    knowledge_init = actions.add_parser('knowledge-init',
+        help='5H.8 create additive local PostgreSQL biomedical knowledge tables')
+    knowledge_import = actions.add_parser('knowledge-import-ncit',
+        help='5H.8 import a locally supplied NCI Thesaurus FLAT ZIP (no download)')
+    knowledge_import.add_argument('--file',type=Path,required=True)
+    knowledge_import.add_argument('--release',required=True)
+    knowledge_import.add_argument('--source-uri',required=True)
+    knowledge_import.add_argument('--license-name',default='NCI Thesaurus; review terms')
+    knowledge_import.add_argument('--license-reviewed',action='store_true')
+    knowledge_import.add_argument('--redistribution-permitted',action='store_true')
+    knowledge_import.add_argument('--activate',action='store_true')
+    knowledge_review=actions.add_parser('knowledge-license-review',
+        help='5H.8 record a human license review after import')
+    knowledge_review.add_argument('--source',required=True)
+    knowledge_review.add_argument('--release',required=True)
+    knowledge_review.add_argument('--license-name',required=True)
+    knowledge_review.add_argument('--redistribution-permitted',action='store_true')
+    syn_index=actions.add_parser('knowledge-index-synonyms',
+        help='5H.8.3 index exact NCIt synonyms from the already-pinned local FLAT ZIP')
+    syn_index.add_argument('--file',type=Path,required=True)
+    syn_index.add_argument('--release',required=True)
+    knowledge_embed=actions.add_parser('knowledge-embed',
+        help='5H.8 explicitly create local pinned SapBERT vectors (offline)')
+    knowledge_embed.add_argument('--limit',type=int,default=512)
+    knowledge_embed.add_argument('--batch-size',type=int,default=32)
+    actions.add_parser('knowledge-build-vector-index',
+        help='5H.8 build HNSW pgvector index after embedding')
+    knowledge_search = actions.add_parser('knowledge-search',
+        help='5H.8 batch-search local PostgreSQL knowledge, no external requests')
+    knowledge_search.add_argument('--query',action='append',required=True)
+    knowledge_search.add_argument('--top-k',type=int,default=5)
+    knowledge_search.add_argument('--semantic',action='store_true')
+    knowledge_snap = actions.add_parser('knowledge-snapshot',
+        help='5H.8 export checksum-pinned knowledge-only PostgreSQL dump')
+    knowledge_snap.add_argument('--output',type=Path,required=True)
+    knowledge_snap.add_argument('--snapshot-manifest',type=Path,required=True)
+    knowledge_snap.add_argument('--private',action='store_true',help='Internal-only export of licensed content')
+    knowledge_verify = actions.add_parser('knowledge-verify-snapshot',
+        help='5H.8 verify offline knowledge snapshot SHA256')
+    knowledge_verify.add_argument('--input',type=Path,required=True)
+    knowledge_verify.add_argument('--snapshot-manifest',type=Path,required=True)
+    knowledge_restore = actions.add_parser('knowledge-restore-snapshot',
+        help='5H.8 restore approved knowledge dump into fresh DB only (no drops)')
+    knowledge_restore.add_argument('--input',type=Path,required=True)
+    knowledge_restore.add_argument('--snapshot-manifest',type=Path,required=True)
+    knowledge_restore.add_argument('--allow-private-local',action='store_true')
+    local_rag = actions.add_parser('annotation-local-knowledge-run',
+        help='5H.8 read-only offline local PostgreSQL RAG experiment; no API calls')
+    local_rag.add_argument('--model',default='qwen2.5:7b-instruct')
+    local_rag.add_argument('--ollama-url')
+    local_rag.add_argument('--batch',type=Path,default=ROOT/'reports/holdout_5h21/annotation_quality_batch.json')
+    local_rag.add_argument('--review-lock',type=Path,default=ROOT/'reports/holdout_5h21/ai_provisional_reference.json')
+    local_rag.add_argument('--knowledge',type=Path,default=ROOT/'knowledge/annotation_role_guidance_5h4.json')
+    local_rag.add_argument('--output',type=Path,default=ROOT/'reports/holdout_5h21/qwen25_7b_local_5h8.json')
+    local_rag.add_argument('--queue',type=Path,default=ROOT/'reports/holdout_5h21/local_5h8.sqlite3')
+    local_rag.add_argument('--per-class',type=int,default=3)
+    local_rag.add_argument('--top-k',type=int,default=5)
+    local_rag.add_argument('--seed',type=int,default=42)
+    local_rag.add_argument('--think',choices=('on','off'),default='off')
+    local_rag.add_argument('--temperature',type=float,default=0.0)
+    local_rag.add_argument('--timeout',type=int)
+    local_rag.add_argument('--num-ctx',type=int)
+    local_rag.add_argument('--num-predict',type=int)
+    local_rag.add_argument('--resume',action='store_true')
+    local_rag.add_argument('--semantic',action='store_true',help='Use locally pinned SapBERT + pgvector')
+    # 5H.8.4: local-first biomedical knowledge, optional preparation-time API fallback.
+    actions.add_parser('knowledge-enrichment-status', help='5H.8.4 show preparation-only PostgreSQL lookup/revisit counts')
+    hybrid = actions.add_parser('annotation-hybrid-knowledge-run',
+        help='5H.8.4 local PostgreSQL first; optional online enrichment in preparation only')
+    hybrid.add_argument('--model',default='qwen2.5:7b-instruct')
+    hybrid.add_argument('--ollama-url')
+    hybrid.add_argument('--batch',type=Path,default=ROOT/'reports/holdout_5h21/annotation_quality_batch.json')
+    hybrid.add_argument('--review-lock',type=Path,default=ROOT/'reports/holdout_5h21/ai_provisional_reference.json')
+    hybrid.add_argument('--knowledge',type=Path,default=ROOT/'knowledge/annotation_role_guidance_5h4.json')
+    hybrid.add_argument('--output',type=Path,required=True)
+    hybrid.add_argument('--queue',type=Path,required=True)
+    hybrid.add_argument('--per-class',type=int,default=3)
+    hybrid.add_argument('--top-k',type=int,default=5)
+    hybrid.add_argument('--seed',type=int,default=42)
+    hybrid.add_argument('--think',choices=('on','off'),default='off')
+    hybrid.add_argument('--temperature',type=float,default=0.0)
+    hybrid.add_argument('--timeout',type=int)
+    hybrid.add_argument('--num-ctx',type=int)
+    hybrid.add_argument('--num-predict',type=int)
+    hybrid.add_argument('--resume',action='store_true')
+    hybrid.add_argument('--semantic',action='store_true')
+    hybrid.add_argument('--sources',default='nlm_loinc,nlm_disease,umls')
+    hybrid.add_argument('--online',action='store_true',
+        help='Explicitly allow approved public API requests during development preparation')
+    hybrid.add_argument('--max-requests',type=int,default=40)
+    hybrid.add_argument('--rate-seconds',type=float,default=1.0)
+    hybrid.add_argument('--wait-seconds',type=float,default=90.0)
+    # 5H.8.5: controlled role-first SOURCE versus LOCAL terminology experiment.
+    role_first = actions.add_parser('annotation-role-first-run',
+        help='5H.8.5 Qwen stored-value role first; source-only or local PostgreSQL context')
+    role_first.add_argument('--model',default='qwen2.5:7b-instruct')
+    role_first.add_argument('--ollama-url')
+    role_first.add_argument('--batch',type=Path,
+        default=ROOT/'reports/holdout_5h21/annotation_quality_batch.json')
+    role_first.add_argument('--review-lock',type=Path,
+        default=ROOT/'reports/holdout_5h21/ai_provisional_reference.json')
+    role_first.add_argument('--output',type=Path,required=True)
+    role_first.add_argument('--mode',choices=('source','local'),default='source')
+    role_first.add_argument('--per-class',type=int,default=3)
+    role_first.add_argument('--top-k',type=int,default=5)
+    role_first.add_argument('--seed',type=int,default=42)
+    role_first.add_argument('--think',choices=('on','off'),default='off')
+    role_first.add_argument('--temperature',type=float,default=0.0)
+    role_first.add_argument('--timeout',type=int)
+    role_first.add_argument('--num-ctx',type=int)
+    role_first.add_argument('--num-predict',type=int)
+    role_first.add_argument('--resume',action='store_true')
+    # 5H.8.5.5: compare frozen balanced-prompt SOURCE vs local+remote context.
+    role_hybrid = actions.add_parser('annotation-role-hybrid-run',
+        help='5H.8.5.5 reuse source results, test same role-first prompt with NCIt and optional online APIs')
+    role_hybrid.add_argument('--model',default='qwen2.5:7b-instruct')
+    role_hybrid.add_argument('--ollama-url')
+    role_hybrid.add_argument('--batch',type=Path,
+        default=ROOT/'reports/holdout_5h21/annotation_quality_batch.json')
+    role_hybrid.add_argument('--review-lock',type=Path,
+        default=ROOT/'reports/holdout_5h21/ai_provisional_reference.json')
+    role_hybrid.add_argument('--source-run',type=Path,required=True,
+        help='Existing 5H.8.5.4 source-only report; no duplicate source inference')
+    role_hybrid.add_argument('--output',type=Path,required=True)
+    role_hybrid.add_argument('--per-class',type=int,default=15)
+    role_hybrid.add_argument('--top-k',type=int,default=5)
+    role_hybrid.add_argument('--seed',type=int,default=42)
+    role_hybrid.add_argument('--think',choices=('on','off'),default='off')
+    role_hybrid.add_argument('--temperature',type=float,default=0.)
+    role_hybrid.add_argument('--timeout',type=int)
+    role_hybrid.add_argument('--num-ctx',type=int)
+    role_hybrid.add_argument('--num-predict',type=int)
+    role_hybrid.add_argument('--sources',default='nlm_loinc,nlm_disease,umls')
+    role_hybrid.add_argument('--online',action='store_true',
+        help='Explicitly enable approved external APIs in preparation only; otherwise zero calls')
+    role_hybrid.add_argument('--max-requests',type=int,default=40)
+    role_hybrid.add_argument('--rate-seconds',type=float,default=1.)
+    role_hybrid.add_argument('--wait-seconds',type=float,default=120.)
+    role_hybrid.add_argument('--resume',action='store_true')
+    # 5H.9.1: read-only terminology-boundary/source-dictionary context audit.
+    context_audit = actions.add_parser('annotation-source-context-audit',
+        help='Audit source variable/dictionary context; never normalize arbitrary IDs or modify DB')
+    context_audit.add_argument('--batch',type=Path,default=ROOT/'reports/holdout_5h21/annotation_quality_batch.json')
+    context_audit.add_argument('--corpus-root',type=Path,required=True,
+        help='Existing extracted dbGaP root (studies/ or dbgap/studies/); original XML required')
+    context_audit.add_argument('--output',type=Path,required=True)
+    context_audit.add_argument('--per-class',type=int,default=3)
+    context_audit.add_argument('--neighbors',type=int,default=3)
+    context_audit.add_argument('--variable',action='append',default=[],help='Restrict audit to exact variable accession; repeat')
+    context_run = actions.add_parser('annotation-source-context-run',
+        help='5H.9.1 Qwen with original XML context; exact frozen balanced system prompt')
+    context_run.add_argument('--batch',type=Path,default=ROOT/'reports/holdout_5h21/annotation_quality_batch.json')
+    context_run.add_argument('--context-report',type=Path,required=True)
+    context_run.add_argument('--review-lock',type=Path,default=ROOT/'reports/holdout_5h21/ai_provisional_reference.json')
+    context_run.add_argument('--output',type=Path,required=True)
+    context_run.add_argument('--model',default='qwen2.5:7b-instruct')
+    context_run.add_argument('--ollama-url')
+    context_run.add_argument('--per-class',type=int,default=3)
+    context_run.add_argument('--seed',type=int,default=42)
+    context_run.add_argument('--think',choices=('on','off'),default='off')
+    context_run.add_argument('--temperature',type=float,default=0.0)
+    context_run.add_argument('--timeout',type=int)
+    context_run.add_argument('--num-ctx',type=int)
+    context_run.add_argument('--num-predict',type=int)
+    context_run.add_argument('--resume',action='store_true')
+    evidence_check = actions.add_parser('annotation-source-evidence-check',
+        help='5H.9.2 read-only contradictions between original XML and frozen role predictions')
+    evidence_check.add_argument('--batch',type=Path,
+        default=ROOT/'reports/holdout_5h21/annotation_quality_batch.json')
+    evidence_check.add_argument('--context-report',type=Path,required=True)
+    evidence_check.add_argument('--role-run',type=Path,required=True)
+    evidence_check.add_argument('--output',type=Path,required=True)
+    # 5H.9.3: richer XML evidence, unresolved XML diagnostics, independent role review.
+    ext = actions.add_parser('annotation-source-evidence-extended',
+        help='5H.9.3 inspect coded value labels and study context; never auto-relabel')
+    missing = actions.add_parser('annotation-source-missing',
+        help='5H.9.3 identify why original source XML was unavailable; no fallback matching')
+    template = actions.add_parser('annotation-role-review-template',
+        help='5H.9.3 create two independent, model-blind role review CSVs')
+    score_role = actions.add_parser('annotation-role-review-score',
+        help='5H.9.3 score exact role against two independent reviewers (no provisional AI labels)')
+    for command in (ext,missing,template,score_role):
+        command.add_argument('--batch',type=Path,
+            default=ROOT/'reports/holdout_5h21/annotation_quality_batch.json')
+        command.add_argument('--context-report',type=Path,required=True)
+    for command in (ext,score_role):
+        command.add_argument('--role-run',type=Path,required=True)
+    missing.add_argument('--corpus-root',type=Path,
+        help='Optional exact-path recheck, when invoked in the existing corpus container')
+    template.add_argument('--output-a',type=Path,required=True)
+    template.add_argument('--output-b',type=Path,required=True)
+    score_role.add_argument('--review-a',type=Path,required=True)
+    score_role.add_argument('--review-b',type=Path,required=True)
+    for command in (ext,missing,score_role):
+        command.add_argument('--output',type=Path,required=True)
+    sample_fresh = actions.add_parser('annotation-role-sample-fresh',
+        help='5H.9.3 deterministic study-disjoint glucose-source candidate sample; no model')
+    sample_fresh.add_argument('--batch',type=Path,
+        default=ROOT/'reports/holdout_5h21/annotation_quality_batch.json')
+    sample_fresh.add_argument('--corpus-root',type=Path,required=True)
+    sample_fresh.add_argument('--target',type=int,default=150)
+    sample_fresh.add_argument('--seed',default='spark-5h93-independent-v1')
+    sample_fresh.add_argument('--max-studies-scanned',type=int,default=1000)
+    sample_fresh.add_argument('--max-files-per-study',type=int,default=12)
+    sample_fresh.add_argument('--output-a',type=Path,required=True)
+    sample_fresh.add_argument('--output-b',type=Path,required=True)
+    sample_fresh.add_argument('--manifest-output',type=Path,required=True)
     args = parser.parse_args(argv)
     try:
         manifest = read_json(args.manifest)
-        if args.action == "preflight":
+        if args.action == 'annotation-role-sample-fresh':
+            from spark_source_sample_5h93 import sample
+            sample(args.batch,args.corpus_root,args.output_a,args.output_b,args.manifest_output,
+                   target=args.target,seed=args.seed,max_studies_scanned=args.max_studies_scanned,
+                   max_files_per_study=args.max_files_per_study)
+        elif args.action == 'annotation-source-evidence-extended':
+            from spark_source_evidence_5h93 import extended_check
+            extended_check(args.batch,args.context_report,args.role_run,args.output)
+        elif args.action == 'annotation-source-missing':
+            from spark_source_evidence_5h93 import missing_diagnostics
+            missing_diagnostics(args.batch,args.context_report,args.output,args.corpus_root)
+        elif args.action == 'annotation-role-review-template':
+            from spark_source_evidence_5h93 import review_templates
+            review_templates(args.batch,args.context_report,args.output_a,args.output_b)
+        elif args.action == 'annotation-role-review-score':
+            from spark_source_evidence_5h93 import score_roles
+            score_roles(args.batch,args.context_report,args.role_run,
+                        args.review_a,args.review_b,args.output)
+        elif args.action == 'annotation-source-evidence-check':
+            from spark_source_evidence_5h92 import compare
+            compare(args.batch,args.context_report,args.role_run,args.output)
+        elif args.action == 'annotation-source-context-audit':
+            from spark_source_context_5h9 import make_audit
+            make_audit(args.batch,args.corpus_root,args.output,
+                       per_class=args.per_class,neighbors=args.neighbors,
+                       only_variables=tuple(args.variable))
+        elif args.action == 'annotation-source-context-run':
+            from spark_source_context_5h9 import run_pilot
+            from spark_llm_experiment import default_ollama_url
+            run_pilot(args.batch,args.context_report,args.output,model=args.model,
+                      api_url=args.ollama_url or default_ollama_url(),review_lock=args.review_lock,
+                      per_class=args.per_class,seed=args.seed,think=args.think,
+                      temperature=args.temperature,timeout=args.timeout,
+                      num_ctx=args.num_ctx,num_predict=args.num_predict,resume=args.resume)
+        elif args.action == 'knowledge-init':
+            from spark_kb_store import migrate
+            migrate()
+        elif args.action == 'knowledge-import-ncit':
+            from spark_kb_store import import_ncit
+            import_ncit(args.file,args.release,args.source_uri,args.license_name,
+              reviewed=args.license_reviewed,permitted=args.redistribution_permitted,
+              activate=args.activate)
+        elif args.action == 'knowledge-license-review':
+            from spark_kb_store import review_license
+            review_license(args.source,args.release,
+                permitted=args.redistribution_permitted,license_name=args.license_name)
+        elif args.action == 'knowledge-index-synonyms':
+            from spark_kb_store import index_ncit_synonyms
+            index_ncit_synonyms(args.file,args.release)
+        elif args.action == 'knowledge-embed':
+            from spark_kb_vectors import populate
+            populate(limit=args.limit,batch_size=args.batch_size)
+        elif args.action == 'knowledge-build-vector-index':
+            from spark_kb_vectors import build_vector_index
+            build_vector_index()
+        elif args.action == 'knowledge-search':
+            from spark_kb_store import search_batch
+            print(json.dumps(search_batch(args.query,top_k=args.top_k,semantic=args.semantic),indent=2))
+        elif args.action == 'knowledge-snapshot':
+            from spark_kb_store import export_snapshot
+            print(json.dumps(export_snapshot(args.output,args.snapshot_manifest,private=args.private),indent=2))
+        elif args.action == 'knowledge-verify-snapshot':
+            from spark_kb_store import verify_snapshot
+            print(json.dumps(verify_snapshot(args.input,args.snapshot_manifest),indent=2))
+        elif args.action == 'knowledge-restore-snapshot':
+            from spark_kb_store import restore_snapshot
+            restore_snapshot(args.input,args.snapshot_manifest,allow_private=args.allow_private_local)
+        elif args.action == 'knowledge-enrichment-status':
+            from spark_kb_remote import queue_status
+            print(json.dumps(queue_status(),indent=2))
+        elif args.action == 'annotation-role-first-run':
+            from spark_role_first_5h85 import run_pilot as role_first_run
+            from spark_llm_experiment import default_ollama_url
+            role_first_run(batch_file=args.batch,review_lock=args.review_lock,
+                output=args.output,model=args.model,
+                api_url=args.ollama_url or default_ollama_url(),mode=args.mode,
+                per_class=args.per_class,top_k=args.top_k,seed=args.seed,
+                think=args.think,temperature=args.temperature,timeout=args.timeout,
+                num_ctx=args.num_ctx,num_predict=args.num_predict,resume=args.resume)
+        elif args.action == 'annotation-role-hybrid-run':
+            from spark_role_hybrid_5h855 import run_pilot as role_hybrid_run
+            from spark_llm_experiment import default_ollama_url
+            role_hybrid_run(batch_file=args.batch,review_lock=args.review_lock,
+                source_run=args.source_run,output=args.output,model=args.model,
+                api_url=args.ollama_url or default_ollama_url(),per_class=args.per_class,
+                top_k=args.top_k,seed=args.seed,think=args.think,
+                temperature=args.temperature,timeout=args.timeout,num_ctx=args.num_ctx,
+                num_predict=args.num_predict,sources=args.sources,online=args.online,
+                max_requests=args.max_requests,rate_seconds=args.rate_seconds,
+                wait_seconds=args.wait_seconds,resume=args.resume)
+        elif args.action == 'annotation-hybrid-knowledge-run':
+            from spark_hybrid_rag import run_pilot as hybrid_run
+            from spark_llm_experiment import default_ollama_url
+            hybrid_run(batch_file=args.batch,review_lock=args.review_lock,
+                knowledge_file=args.knowledge,output=args.output,queue_file=args.queue,
+                model=args.model,api_url=args.ollama_url or default_ollama_url(),
+                per_class=args.per_class,top_k=args.top_k,seed=args.seed,
+                think=args.think,temperature=args.temperature,timeout=args.timeout,
+                num_ctx=args.num_ctx,num_predict=args.num_predict,
+                resume=args.resume,semantic=args.semantic,sources=args.sources,
+                online=args.online,max_requests=args.max_requests,
+                rate_seconds=args.rate_seconds,wait_seconds=args.wait_seconds)
+        elif args.action == 'annotation-local-knowledge-run':
+            from spark_kb_rag import run_pilot as local_knowledge_run
+            from spark_llm_experiment import default_ollama_url
+            local_knowledge_run(batch_file=args.batch,review_lock=args.review_lock,
+                knowledge_file=args.knowledge,output=args.output,queue_file=args.queue,
+                model=args.model,api_url=args.ollama_url or default_ollama_url(),
+                per_class=args.per_class,top_k=args.top_k,seed=args.seed,think=args.think,
+                temperature=args.temperature,timeout=args.timeout,
+                num_ctx=args.num_ctx,num_predict=args.num_predict,resume=args.resume,semantic=args.semantic)
+        elif args.action == "preflight":
             preflight(manifest, from_archive=args.from_archive, dry_run=args.dry_run)
         elif args.action == "bootstrap":
             bootstrap(manifest, from_archive=args.from_archive, dry_run=args.dry_run,
@@ -711,6 +1242,125 @@ def main(argv: list[str] | None = None) -> int:
             compose('--profile', 'tools', 'run', '--rm', '--build', '--no-deps',
                     '--entrypoint', 'python', 'variable-annotation-worker',
                     '-m', 'app.annotation_quality', 'score')
+        elif args.action in ('annotation-llm-check', 'annotation-llm-run', 'annotation-llm-score'):
+            from spark_llm_experiment import (default_ollama_url, preflight,
+                                              run_pilot, score_pilot)
+            if args.action == 'annotation-llm-score':
+                score_pilot(args.run, args.reference, args.output)
+            else:
+                url = args.ollama_url or default_ollama_url()
+                if args.action == 'annotation-llm-check':
+                    print('LOCAL MODEL RECEIPT:', json.dumps(preflight(args.model, url)))
+                else:
+                    if not 1 <= args.per_class <= 15 or not 5 <= args.timeout <= 1200:
+                        raise ValueError('Use --per-class 1..15 and --timeout 5..1200 seconds')
+                    run_pilot(args.batch, args.output, args.model, url,
+                              args.per_class, seed=args.seed,
+                              resume=args.resume, timeout=args.timeout)
+        elif args.action in ('annotation-role-run', 'annotation-role-score'):
+            from spark_role_only_experiment import run_role_pilot, score_role_pilot
+            if args.action == 'annotation-role-score':
+                score_role_pilot(args.run, args.reference, args.output)
+            else:
+                from spark_llm_experiment import default_ollama_url
+                if not 1 <= args.per_class <= 15:
+                    raise ValueError('Use --per-class 1..15')
+                run_role_pilot(args.batch, args.output, args.model,
+                               args.ollama_url or default_ollama_url(),
+                               args.per_class, seed=args.seed,
+                               resume=args.resume, timeout=args.timeout,
+                               think=args.think, num_predict=args.num_predict,
+                               num_ctx=args.num_ctx)
+        elif args.action in ('annotation-binary-run', 'annotation-binary-score'):
+            from spark_binary_first_experiment import run_pilot as binary_pilot, score_pilot as binary_score
+            if args.action == 'annotation-binary-score':
+                binary_score(args.run, args.reference, args.output)
+            else:
+                from spark_llm_experiment import default_ollama_url
+                binary_pilot(args.batch, args.output, args.model,
+                             args.ollama_url or default_ollama_url(), args.per_class,
+                             seed=args.seed, resume=args.resume, timeout=args.timeout,
+                             think=args.think, num_predict=args.num_predict,
+                             num_ctx=args.num_ctx, temperature=args.temperature,
+                             review_lock=args.review_lock)
+        elif args.action in ('annotation-rag-preview', 'annotation-rag-run'):
+            from spark_rag_experiment import preview as rag_preview, run_pilot as rag_pilot
+            if args.action == 'annotation-rag-preview':
+                rag_preview(args.batch, args.knowledge,
+                            per_class=args.per_class, top_k=args.top_k)
+            else:
+                from spark_llm_experiment import default_ollama_url
+                rag_pilot(args.batch, args.output, args.knowledge, args.model,
+                          args.ollama_url or default_ollama_url(), args.per_class,
+                          top_k=args.top_k, seed=args.seed, resume=args.resume,
+                          timeout=args.timeout, think=args.think,
+                          num_predict=args.num_predict, num_ctx=args.num_ctx,
+                          temperature=args.temperature, review_lock=args.review_lock)
+        elif args.action == 'annotation-contextual-rag-preview':
+            from spark_contextual_query import plan_preview
+            from spark_multisource_rag import parse_sources
+            plan_preview(args.batch,args.per_class,parse_sources(args.sources))
+        elif args.action == 'annotation-contextual-rag-run':
+            from spark_contextual_rag import run_pilot as contextual_pilot,parse_sources
+            from spark_llm_experiment import default_ollama_url
+            contextual_pilot(batch_file=args.batch,review_lock=args.review_lock,
+                knowledge_file=args.knowledge,output=args.output,queue_file=args.queue,
+                model=args.model,api_url=args.ollama_url or default_ollama_url(),
+                sources=parse_sources(args.sources),per_class=args.per_class,
+                top_k=args.top_k,seed=args.seed,think=args.think,
+                temperature=args.temperature,timeout=args.timeout,
+                num_ctx=args.num_ctx,num_predict=args.num_predict,online=args.online,
+                max_requests=args.max_requests,rate_seconds=args.rate_seconds,
+                wait_seconds=args.wait_seconds,resume=args.resume)
+        elif args.action == 'annotation-multisource-rag-run':
+            from spark_multisource_rag import run_pilot as multisource_pilot, parse_sources
+            from spark_llm_experiment import default_ollama_url
+            multisource_pilot(batch_file=args.batch,review_lock=args.review_lock,
+                knowledge_file=args.knowledge,output=args.output,queue_file=args.queue,
+                model=args.model,api_url=args.ollama_url or default_ollama_url(),
+                sources=parse_sources(args.sources),per_class=args.per_class,
+                top_k=args.top_k,seed=args.seed,think=args.think,
+                temperature=args.temperature,timeout=args.timeout,
+                num_ctx=args.num_ctx,num_predict=args.num_predict,online=args.online,
+                max_requests=args.max_requests,rate_seconds=args.rate_seconds,
+                wait_seconds=args.wait_seconds,resume=args.resume)
+        elif args.action == 'annotation-adaptive-rag-run':
+            from spark_adaptive_rag import run_pilot as adaptive_pilot
+            from spark_llm_experiment import default_ollama_url
+            adaptive_pilot(batch_file=args.batch, review_lock=args.review_lock,
+                           knowledge_file=args.knowledge, output=args.output,
+                           queue_file=args.queue, model=args.model,
+                           api_url=args.ollama_url or default_ollama_url(),
+                           per_class=args.per_class, top_k=args.top_k,
+                           seed=args.seed, think=args.think,
+                           temperature=args.temperature, timeout=args.timeout,
+                           num_ctx=args.num_ctx, num_predict=args.num_predict,
+                           online=args.online, max_requests=args.max_requests,
+                           rate_seconds=args.rate_seconds,
+                           wait_seconds=args.wait_seconds, resume=args.resume)
+        elif args.action == 'annotation-binary-adjudicate':
+            from spark_binary_adjudicate import adjudicate
+            adjudicate(args.run, args.batch, args.review_lock, args.output,
+                       retry_mode=args.retry_mode,
+                       max_model_calls=args.max_model_calls, resume=args.resume)
+        elif args.action == 'annotation-holdout-sample':
+            if not 1 <= args.per_class <= 15:
+                raise ValueError('--per-class must be 1..15')
+            if not (ROOT / 'reports' / 'annotation_quality_batch.json').is_file():
+                raise ValueError('Missing original reports/annotation_quality_batch.json')
+            if (ROOT / 'reports' / 'holdout_5h21' / 'annotation_quality_batch.json').exists():
+                raise ValueError('Holdout already exists; do not overwrite reviewer work')
+            compose('--profile','tools','run','--rm','--build','--entrypoint','python',
+                    'variable-annotation-worker','-m','app.holdout_quality','sample',
+                    '--per-class',str(args.per_class),'--seed',args.seed)
+        elif args.action == 'annotation-holdout-freeze':
+            from backend.app.holdout_quality import freeze_reference, freeze_ai_provisional_reference
+            (freeze_ai_provisional_reference if args.ai_provisional else freeze_reference)(ROOT / 'reports' / 'holdout_5h21')
+        elif args.action == 'annotation-holdout-score':
+            from spark_holdout_score import score_holdout
+            directory = ROOT / 'reports' / 'holdout_5h21'
+            score_holdout(directory / 'annotation_quality_batch.json',
+                          args.reference, args.run, args.output)
         elif args.action == 'annotation-benchmark':
             compose('--profile','tools','run','--rm','--build','variable-annotation-benchmark')
         elif args.action == "model-index":

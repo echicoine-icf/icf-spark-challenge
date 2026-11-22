@@ -1,4 +1,4 @@
-"""Milestone 5G.3: conservative variable *kind* and LOINC compatibility triage.
+"""Milestone 5G.4: conservative variable *kind* and LOINC compatibility triage.
 
 Two independent questions:
   1. Is this source field an observed analyte measurement (vs. a diagnosis,
@@ -12,12 +12,24 @@ from __future__ import annotations
 
 import re
 
-VERSION = 'variable_kind_axes_v3'
+VERSION = 'variable_kind_axes_v4'
 MEASUREMENT = 'analyte_measurement'
 
 # Ordered, strong patterns for what this particular variable reports. Do not
 # infer the type from a neighboring phenotype dataset's title alone.
 KIND_PATTERNS = (
+    # A field ABOUT measurement quality, adherence, counts, or the units used
+    # by another result field does not itself contain the analyte result.
+    ('monitoring_adherence', (
+        r'\b(?:non[- ]?adheren(?:ce|t)|adheren(?:ce|t)|compliance|non[- ]?compliance)\b.{0,160}\b(?:glucose|monitoring|treatment)\b',
+        r'\b(?:failed|failure)\s+to\s+(?:perform|monitor|check|test)\b.{0,160}\b(?:glucose|monitoring)\b',
+        r'\b(?:number|count|frequency|times\s+per\s+(?:day|week))\b.{0,100}\b(?:glucose\s+(?:checks?|tests?|monitoring)|blood\s+sugar\s+checks?)\b',
+        r'\bglucose\s+(?:monitoring|testing|checks?)\s+(?:frequency|adherence|compliance)\b',
+    )),
+    ('result_unit_metadata', (
+        r'\b(?:glucose|sugar)\s+(?:result\s+)?(?:standard\s+)?units?\s*(?:field|variable)?\s*$',
+        r'\b(?:urine|serum|plasma|blood)\s+glucose\s+result\s+standard\s+units\b',
+    )),
     ('timing_metadata', (
         r'\bage\s+(?:at|when)\s+(?:the\s+)?(?:fasting\s+|serum\s+|blood\s+|plasma\s+)?glucose\b',
         r'\bage_at_(?:fasting_)?glucose\b',
@@ -81,9 +93,19 @@ def classify_kind(variable: dict, component: str, legacy: dict | None = None) ->
     description = variable.get('variable_description') or ''
     text = (name + ' ' + description).strip()
     unit = _unit(variable.get('unit') or '')
+    # Explicit result-units column names (e.g. UrineGlucoseResultStdUnits)
+    # are metadata about the observation, not the observation value itself.
+    raw_name = variable.get('variable_name') or ''
+    unit_column = bool(re.search(r'(?:result)?(?:std|standard)?units?$', raw_name, re.I)
+        and re.search(r'gluc(?:ose)?|sugar', raw_name, re.I))
     signals = []
     special = None
+    if unit_column:
+        special = 'result_unit_metadata'
+        signals.append('explicit_result_units_column_name')
     for kind, patterns in KIND_PATTERNS:
+        if special:
+            break
         hits = [pattern for pattern in patterns if re.search(pattern, text, re.I)]
         if hits:
             special = kind
@@ -211,12 +233,18 @@ def assess_loinc_compatibility(concept: dict, variable: dict,
     # correspond to this precise code; these are protocol qualifiers for review.
     missing.append('timing')
     missing.append('method')
+    # A variable value may have been converted into the displayed units.
+    # Property-unit mismatch is a conflict for direct code assignment, not
+    # proof of a different underlying assay or unconvertible values.
+    unit_conversion_unverified = any('concentration_unit_vs_' in c for c in conflicts)
+    if unit_conversion_unverified:
+        hints.append('possible_reporting_unit_conversion_unverified')
     if conflicts:
         status = 'incompatible'
     elif any(a in missing for a in ('specimen','property','scale')):
         status = 'insufficient_evidence'
     else:
         status = 'plausible_unverified'
-    return {'status':status, 'conflicts':conflicts, 'missing_axes':sorted(set(missing)),
+    return {'status':status, 'conflicts':conflicts, 'reporting_unit_conversion_unverified':unit_conversion_unverified, 'missing_axes':sorted(set(missing)),
             'compatible_hints':sorted(set(hints)), 'code_match_verified':False,
             'reason':'Requires independent source/protocol verification of all six LOINC axes'}

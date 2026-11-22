@@ -128,7 +128,7 @@ def test_scan_stores_only_reviewable_candidates_and_reports_exclusions(make_vari
     assert report['upserted']==2
     assert report['selected_study_count']==2
     assert len(report['excluded_non_measurement_examples'])==2
-    assert all(p['matcher_version']=='variable_kind_axes_v3' for p in cursor.saved)
+    assert all(p['matcher_version']=='variable_kind_axes_v4' for p in cursor.saved)
     assert all(json.loads(p['evidence'])['review_eligible'] for p in cursor.saved)
     assert m.MATCHER_VERSION != 'variable_anchor_rules_v1'
 
@@ -159,11 +159,11 @@ def test_review_rejects_known_conflicts_even_if_confirmation_supplied(axes,evide
     assert not cursor.inserted
 
 
-def test_api_queue_defaults_to_v3_and_supports_explicit_legacy_version():
+def test_api_queue_defaults_to_v4_and_supports_explicit_legacy_version():
     from pathlib import Path
     source=Path(__file__).resolve().parents[1]/'app'/'main.py'
     text=source.read_text()
-    assert "= 'variable_kind_axes_v3'" in text
+    assert "= 'variable_kind_axes_v4'" in text
     assert "'variable_precision_rules_v2'" in text
     assert "matcher_version=='all'" in text
     assert "c.evidence->>'candidate_classification'" in text

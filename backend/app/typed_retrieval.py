@@ -235,12 +235,17 @@ def merge_reviewed_annotations(ranked: list[dict], pools: list[list[dict]],
 def typed_search(cur, requirements: Sequence[dict], *, limit: int = 10,
                  cap_per_term: int = 150, max_expansions: int = 4,
                  match_mode: str = 'ranked', evidence_per_requirement: int = 1,
-                 include_reviewed_annotations: bool = False) -> dict:
+                 include_reviewed_annotations: bool = False,
+                 include_measurement_candidates: bool = False,
+                 measurement_candidate_limit: int = 10,
+                 measurement_candidate_ranking: str = 'lexical') -> dict:
     specs = validated_requirements(requirements)
     if not 1 <= limit <= 30 or not 20 <= cap_per_term <= 500:
         raise ValueError('limit must be 1–30 and cap_per_term 20–500')
     if not 0 <= max_expansions <= 5 or not 0 <= evidence_per_requirement <= 3:
         raise ValueError('max_expansions must be 0–5 and evidence_per_requirement 0–3')
+    if measurement_candidate_ranking not in ('lexical','source_evidence'):
+        raise ValueError('measurement_candidate_ranking must be lexical or source_evidence')
     if match_mode not in ('ranked','all'):
         raise ValueError('match_mode must be ranked or all')
     cur.execute("SELECT to_regclass('public.idx_variables_original_text_fts') AS idx")
@@ -300,6 +305,16 @@ def typed_search(cur, requirements: Sequence[dict], *, limit: int = 10,
             approved_pools.append(reviewed[:500])
         ranked = merge_reviewed_annotations(ranked, approved_pools,
                          required_count=len(specs), mode=match_mode)
+    # M6.1 is opt-in and cannot modify the original typed ranking or coverage.
+    candidate_recall = None
+    if include_measurement_candidates:
+        from app.measurement_candidate_recall import discover_measurement_candidates
+        # Candidate scoping deliberately uses ORIGINAL lexical study evidence,
+        # independent of match_mode and any reviewed-annotation ranking tier.
+        candidate_scope = rank_study_candidates(pools, required_count=len(specs), mode='ranked')
+        candidate_recall = discover_measurement_candidates(
+            cur, pools, candidate_scope, limit=measurement_candidate_limit,
+            ranking=measurement_candidate_ranking)
     selected = ranked[:limit]
     if selected:
         cur.execute("""SELECT study_id, original_title,
@@ -365,6 +380,7 @@ def typed_search(cur, requirements: Sequence[dict], *, limit: int = 10,
         })
 
     return {
+        **({'measurement_candidate_recall':candidate_recall} if include_measurement_candidates else {}),
         'ranking':'typed_original_literal_and_coverage_then_rrf_v2',
         'fts_query_parser':'plainto_tsquery_english_all_lexemes_AND',
         'match_mode':match_mode,

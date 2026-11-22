@@ -58,12 +58,12 @@ def test_glucose_kind_independent_of_loinc_property():
     assert 'method' in plasma['evidence']['loinc_compatibility']['missing_axes']
 
 
-def test_no_auto_approved_annotations_and_v2_v1_untouched():
-    assert ann.MATCHER_VERSION == 'variable_kind_axes_v3'
+def test_no_auto_approved_annotations_and_older_versions_untouched():
+    assert ann.MATCHER_VERSION == 'variable_kind_axes_v4'
     assert 'variable_concept_reviews' not in ann.UPSERT_SQL
     assert 'ON CONFLICT (dataset_id, variable_id, ontology, ontology_release, concept_id, matcher_version)' in ann.UPSERT_SQL
     source=(Path(__file__).parent.parent/'app'/'main.py').read_text(encoding='utf-8')
-    assert "= 'variable_kind_axes_v3'" in source
+    assert "= 'variable_kind_axes_v4'" in source
     assert "'variable_precision_rules_v2'" in source
     assert "'variable_anchor_rules_v1'" in source
     assert "c.evidence->>'variable_kind'" in source
