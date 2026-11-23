@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import { cachedResource, listResourceCache, removeCachedResource, sourceUrls, storeResource } from './resourceCache';
+import { cachedResource, sourceUrls, storeResource } from './resourceCache';
 import type { ResourceSnapshot } from './resourceCache';
 
 function TreeValue({ value, depth = 0 }: { value: unknown; depth?: number }): ReactNode {
@@ -39,75 +39,99 @@ export function SourceLinks({ text, className = '' }: { text: string; className?
   })}</p>;
 }
 
-type Props = { studyId: string; sourceDescriptions: string[]; sourceRecordURI: string };
-export default function ResourceInspector({ studyId, sourceDescriptions, sourceRecordURI }: Props) {
-  const [uri, setURI] = useState(sourceRecordURI);
+/** Conservative client-side eligibility check. The server remains authoritative.
+ * Only approved public biomedical API endpoints are listed, not arbitrary web links.
+ * This keeps ordinary study homepage URLs out of the retrieval UI.
+ */
+export function isSupportedResourceLink(uri: string): boolean {
+  try {
+    const url = new URL(uri);
+    if (url.protocol !== 'https:' || url.username || url.password || url.port) return false;
+    const host = url.hostname.toLowerCase();
+    if (host === 'eutils.ncbi.nlm.nih.gov') return url.pathname.startsWith('/entrez/eutils/');
+    if (host === 'clinicaltables.nlm.nih.gov') return url.pathname.startsWith('/api/');
+    if (host === 'api-evsrest.nci.nih.gov') return url.pathname.startsWith('/api/');
+    if (host === 'www.ebi.ac.uk') return url.pathname.startsWith('/europepmc/webservices/rest/');
+    return false;
+  } catch { return false; }
+}
+
+type DatasetContext = { dataset_id: string; original_title: string; original_description: string; source_path?: string; variable_count?: number };
+type Props = { studyId: string; studyDescription: string; selectedDataset?: DatasetContext | null };
+
+/** Resource display is strictly derived from the current dbGaP record.
+ * No free-form URI input, global history, or unrelated cached resource navigation.
+ */
+export default function ResourceInspector({ studyId, studyDescription, selectedDataset }: Props) {
   const [snapshot, setSnapshot] = useState<ResourceSnapshot | null>(null);
   const [loading, setLoading] = useState(false);
   const [failure, setFailure] = useState('');
   const [cacheHit, setCacheHit] = useState(false);
   const [view, setView] = useState<'tree' | 'raw'>('tree');
-  const [history, setHistory] = useState<ResourceSnapshot[]>([]);
-  const discovered = useMemo(() => sourceUrls(...sourceDescriptions), [sourceDescriptions]);
-  const updateHistory = useCallback(() => { void listResourceCache().then(setHistory); }, []);
+  const [cachedLinks, setCachedLinks] = useState<Record<string, ResourceSnapshot>>({});
+  const scope = selectedDataset?.dataset_id || 'study';
+  const description = selectedDataset ? selectedDataset.original_description : studyDescription;
+  const allowedURIs = useMemo(() => sourceUrls(description).filter(isSupportedResourceLink), [description]);
 
-  useEffect(() => { setURI(sourceRecordURI); setSnapshot(null); setFailure(''); updateHistory(); }, [sourceRecordURI, updateHistory]);
+  useEffect(() => {
+    let cancelled = false;
+    setSnapshot(null); setFailure(''); setLoading(false); setCacheHit(false); setView('tree');
+    setCachedLinks({});
+    void (async () => {
+      const matches = await Promise.all(allowedURIs.map(async uri => [uri, await cachedResource(uri)] as const));
+      if (cancelled) return;
+      setCachedLinks(Object.fromEntries(matches.filter((entry): entry is readonly [string, ResourceSnapshot] => entry[1] !== null)));
+    })();
+    return () => { cancelled = true; };
+  }, [studyId, scope, allowedURIs]);
 
-  async function inspect(next: string, refresh = false) {
-    const candidate = next.trim();
-    if (!candidate) return;
-    setURI(candidate); setLoading(true); setFailure(''); setView('tree');
+  async function inspect(uri: string, refresh = false) {
+    if (!allowedURIs.includes(uri)) return;
+    setLoading(true); setFailure(''); setView('tree');
     try {
-      let entry: ResourceSnapshot | null = refresh ? null : await cachedResource(candidate);
+      let entry: ResourceSnapshot | null = refresh ? null : await cachedResource(uri);
       setCacheHit(Boolean(entry));
       if (!entry) {
-        const local = new URL(candidate, window.location.origin);
-        const isOwnAPI = local.origin === window.location.origin && /^\/api\/v1\/studies\/phs\d{6}\.v\d+\.p\d+$/.test(local.pathname);
-        if (isOwnAPI) {
-          const response = await fetch(local.pathname, { headers: { Accept: 'application/json' } });
-          if (!response.ok) throw new Error(`SPARK study API returned HTTP ${response.status}`);
-          entry = { uri: candidate, retrieved_at: new Date().toISOString(), content_type: 'application/json', source: 'SPARK original dbGaP study metadata', content: await response.json() };
-        } else {
-          if (!/^https:\/\//i.test(candidate)) throw new Error('Only public HTTPS resources or this study’s SPARK API record may be inspected.');
-          const response = await fetch(`/api/v1/explore/uri?uri=${encodeURIComponent(candidate)}`, { headers: { Accept: 'application/json' } });
-          if (!response.ok) {
-            const problem = await response.json().catch(() => ({})) as { detail?: string };
-            throw new Error(problem.detail || `Resource inspector returned HTTP ${response.status}`);
-          }
-          entry = await response.json() as ResourceSnapshot;
+        if (!/^https:\/\//i.test(uri)) throw new Error('This is not a retrievable HTTPS resource.');
+        const response = await fetch(`/api/v1/explore/uri?uri=${encodeURIComponent(uri)}`, { headers: { Accept: 'application/json' } });
+        if (!response.ok) {
+          const problem = await response.json().catch(() => ({})) as { detail?: string };
+          throw new Error(problem.detail || `Resource retrieval returned HTTP ${response.status}`);
         }
+        entry = await response.json() as ResourceSnapshot;
         await storeResource(entry);
       }
-      setSnapshot(entry); updateHistory();
-    } catch (err) {
-      setSnapshot(null); setFailure(err instanceof Error ? err.message : 'Unable to retrieve resource.');
+      setSnapshot(entry);
+      setCachedLinks(previous => ({ ...previous, [entry.uri]: entry }));
+    } catch (error) {
+      setSnapshot(null);
+      setFailure(error instanceof Error ? error.message : 'Unable to retrieve this linked resource.');
     } finally { setLoading(false); }
   }
 
   async function copy() {
     if (!snapshot) return;
     try { await navigator.clipboard.writeText(JSON.stringify(snapshot.content, null, 2)); }
-    catch { setFailure('Clipboard access is unavailable; use the raw view to copy the content.'); }
+    catch { setFailure('Clipboard unavailable. Select the raw view to copy the data.'); }
   }
 
-  const external = /^https?:\/\//i.test(uri) && !uri.startsWith(window.location.origin + '/');
-  return <section className="resource-explorer" aria-label="Machine-readable resources">
-    <div className="explore-heading"><h4>Explore machine-readable resources</h4><p>Open a source link, inspect a supported public URI, or revisit the data cached in this browser.</p></div>
-    {sourceRecordURI && <button className="resource-primary" onClick={() => void inspect(sourceRecordURI)}>Inspect SPARK study record <span aria-hidden="true">→</span></button>}
-    {discovered.length > 0 && <div className="source-link-list"><strong>Links found in source descriptions</strong>{discovered.map(link => <div className="source-link-row" key={link}><a href={link} target="_blank" rel="noopener noreferrer" title={link}>{displayName(link)} ↗</a><button onClick={() => void inspect(link)} title="Try to retrieve machine-readable data">Inspect data</button></div>)}</div>}
-    <form className="uri-form" onSubmit={event => { event.preventDefault(); void inspect(uri); }}>
-      <label htmlFor={`uri-${studyId}`}>Resource URI</label>
-      <div className="uri-field"><input id={`uri-${studyId}`} value={uri} onChange={e => setURI(e.target.value)} placeholder="https://api.crossref.org/works/…" spellCheck={false} /><button disabled={loading || !uri.trim()} type="submit">Inspect</button></div>
-      {external && <a className="external-resource-link" href={uri} target="_blank" rel="noopener noreferrer">Open original source ↗</a>}
-    </form>
-    {loading && <div className="resource-loading" role="status"><span className="spinner" /> Retrieving resource…</div>}
+  // No usable API references: don't display a pointless section or explanatory warning.
+  if (allowedURIs.length === 0) return null;
+
+  return <section className="resource-explorer" aria-label={selectedDataset ? 'Dataset machine-readable resources' : 'Study machine-readable resources'}>
+    <div className="explore-heading"><h4>Machine-readable resources</h4></div>
+    <div className="source-link-list">
+      {allowedURIs.map(link => <div className="source-link-row" key={link}>
+        <div className="source-link-info"><a href={link} target="_blank" rel="noopener noreferrer" title={link}>{displayName(link)} ↗</a><small>{cachedLinks[link] ? 'Retrieved · saved in browser' : 'Eligible API reference · not yet retrieved'}</small></div>
+        <button type="button" disabled={loading} onClick={() => void inspect(link)}>{cachedLinks[link] ? 'View retrieved data' : 'Retrieve data'}</button>
+      </div>)}
+    </div>
+    {loading && <div className="resource-loading" role="status"><span className="spinner" /> Retrieving selected resource…</div>}
     {failure && <div className="resource-error" role="alert">{failure}</div>}
-    {snapshot && <div className="resource-data-viewer">
-      <div className="resource-data-header"><div><strong>{displayName(snapshot.uri)}</strong><small>{snapshot.content_type} · {cacheHit ? 'Loaded from browser cache' : 'Retrieved and cached'} · {new Date(snapshot.retrieved_at).toLocaleString()}</small></div><div className="resource-tools"><button onClick={() => setView('tree')} className={view === 'tree' ? 'on' : ''}>Structure</button><button onClick={() => setView('raw')} className={view === 'raw' ? 'on' : ''}>Raw</button><button onClick={() => void copy()} title="Copy machine-readable data">Copy</button><button onClick={() => void inspect(snapshot.uri, true)} title="Retrieve again from source">↻</button></div></div>
+    {snapshot && allowedURIs.includes(snapshot.uri) && <div className="resource-data-viewer">
+      <div className="resource-data-header"><div><strong>{displayName(snapshot.uri)}</strong><small>{snapshot.content_type} · {cacheHit ? 'Restored from browser cache' : 'Retrieved and cached'} · {new Date(snapshot.retrieved_at).toLocaleString()}</small></div><div className="resource-tools"><button type="button" onClick={() => setView('tree')} className={view === 'tree' ? 'on' : ''}>Structure</button><button type="button" onClick={() => setView('raw')} className={view === 'raw' ? 'on' : ''}>Raw</button><button type="button" onClick={() => void copy()}>Copy</button><button type="button" onClick={() => void inspect(snapshot.uri, true)} disabled={loading} title="Retrieve from source again">↻</button></div></div>
       <div className="resource-data-body">{view === 'raw' || typeof snapshot.content === 'string' ? <pre>{typeof snapshot.content === 'string' ? snapshot.content : JSON.stringify(snapshot.content, null, 2)}</pre> : <TreeValue value={snapshot.content} />}</div>
-      <p className="resource-provenance">Source: {snapshot.source}. External content is untrusted and is not a verified clinical mapping.</p>
+      <p className="resource-provenance">Source: {snapshot.source}. Linked content is not a verified clinical mapping.</p>
     </div>}
-    {history.length > 0 && <section className="cached-history"><h5>Previously explored resources <span>{history.length}</span></h5><div className="cached-resources">{history.slice(0, 15).map(item => <div className="cache-row" key={item.uri}><button title={item.uri} onClick={() => void inspect(item.uri)}>{displayName(item.uri)}<small>{new Date(item.retrieved_at).toLocaleDateString()}</small></button><button className="cache-delete" title="Remove cached resource" aria-label={`Remove cached ${displayName(item.uri)}`} onClick={() => { void removeCachedResource(item.uri).then(updateHistory); if (snapshot?.uri === item.uri) setSnapshot(null); }}>×</button></div>)}</div></section>}
-    <p className="resource-note">External links always open their original site. In-app fetching is restricted to approved public biomedical HTTPS APIs, with no redirects and a 512 KB limit. Results are cached locally, not in SPARK’s database.</p>
   </section>;
 }

@@ -1,0 +1,25 @@
+You are enhancing a dbGaP study's metadata to help researchers discover it through natural-language searches.
+
+Read the study title, description, MeSH terms, and any related dataset metadata to understand what the study investigates.
+Use the researcher's question as context, but do not assume the study contains anything mentioned in the question.
+
+First, identify up to 12 relevant search terms or phrases that describe the study.
+Consider diseases, populations, measurements, outcomes, methods, and alternative medical terminology.
+Use only concepts supported by the supplied metadata, including relevant MeSH terms.
+
+Next, review the title and description against the terminology you identified.
+Look for opportunities to make the study easier to discover by incorporating useful terminology, clarifying vague descriptions, expanding abbreviations, or correcting spelling errors.
+Prefer meaningful improvements over unnecessary rewriting.
+Do not introduce unsupported study details or change the study's scientific meaning.
+
+Write an enhanced study overview in one or two paragraphs that accurately communicates the study's purpose and important characteristics.
+
+Return JSON only with:
+- `summary`: The enhanced study overview.
+- `terminology`: An array of search terms, each with a brief reason and supporting metadata source.
+- `changes`: An array of proposed title or description edits, each containing the source field, exact original excerpt, replacement text, and reason.
+
+Only propose changes that meaningfully improve clarity or discoverability.
+Each replacement must fit directly in place of its original excerpt.
+If the title and description are already effective, return an empty changes array.
+Always return relevant terminology.

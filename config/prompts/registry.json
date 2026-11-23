@@ -1,0 +1,74 @@
+{
+  "tasks": {
+    "task2_query_planner": {
+      "filename": "task2_query_planner.txt",
+      "temperature": 0.0,
+      "max_tokens": 300,
+      "baseline_allowed": true,
+      "purpose": "Fresh Task 2 request -> structured query plan"
+    },
+    "task2_followup_router": {
+      "filename": "task2_followup_router.txt",
+      "temperature": 0.0,
+      "max_tokens": 320,
+      "baseline_allowed": true,
+      "purpose": "Conversation follow-up -> validated query/inspection/reply action"
+    },
+    "task2_query_refiner": {
+      "filename": "task2_query_refiner.txt",
+      "temperature": 0.0,
+      "max_tokens": 240,
+      "baseline_allowed": false,
+      "purpose": "Prior search evidence -> distinct alternate query terms for interactive search"
+    },
+    "task2_result_analyst": {
+      "filename": "task2_result_analyst.txt",
+      "temperature": 0.1,
+      "max_tokens": 180,
+      "baseline_allowed": true,
+      "purpose": "Ranked original-corpus results -> concise grounded interpretation"
+    },
+    "task2_study_explainer": {
+      "filename": "task2_study_explainer.txt",
+      "temperature": 0.1,
+      "max_tokens": 370,
+      "baseline_allowed": true,
+      "purpose": "Selected original dbGaP study -> grounded explanation"
+    },
+    "task2_relevance_judge": {
+      "filename": "task2_relevance_judge.txt",
+      "temperature": 0.0,
+      "max_tokens": 900,
+      "baseline_allowed": true,
+      "purpose": "Compact ordered candidate grades for relevance cutoff/reranking"
+    },
+    "task2_ranking_explainer": {
+      "filename": "task2_ranking_explainer.txt",
+      "temperature": 0.0,
+      "max_tokens": 1200,
+      "baseline_allowed": true,
+      "purpose": "Selected ranked study -> short structured explanation with a source excerpt"
+    },
+    "task1_variable_normalization": {
+      "filename": "task1_variable_normalization.txt",
+      "temperature": 0.0,
+      "max_tokens": 1800,
+      "baseline_allowed": false,
+      "purpose": "Inspect provided exact and SapBERT candidates for one dbGaP variable batch"
+    },
+    "task1_variable_interpreter": {
+      "filename": "task1_variable_interpreter.txt",
+      "temperature": 0.0,
+      "max_tokens": 3600,
+      "baseline_allowed": false,
+      "purpose": "Infer source-grounded lookup terms before terminology candidate generation"
+    },
+    "corpus_enrichment": {
+      "filename": "corpus_enrichment.txt",
+      "temperature": 0.0,
+      "max_tokens": 900,
+      "baseline_allowed": false,
+      "purpose": "Offline fixed-snapshot evidence -> separately stored enriched representation"
+    }
+  }
+}

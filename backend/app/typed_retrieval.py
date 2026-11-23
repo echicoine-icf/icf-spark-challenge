@@ -34,7 +34,7 @@ WITH q AS (SELECT plainto_tsquery('english', %(q)s) AS tsq),
 hits AS (
   SELECT 'study'::text AS source_type, s.study_id::text AS source_id,
          s.source_path, ts_headline('english', coalesce(s.original_title,'') || ' — ' ||
-         coalesce(s.original_description,''), q.tsq,
+         study_search_text('', s.original_description, s.source_record), q.tsq,
          'MaxWords=40,MinWords=12,MaxFragments=2,StartSel=<<,StopSel=>>') AS excerpt,
          8.0 * ts_rank_cd(s.original_fts, q.tsq) AS score
     FROM studies s CROSS JOIN q

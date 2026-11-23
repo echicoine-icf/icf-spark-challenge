@@ -41,13 +41,13 @@ ORDER BY n.distance ASC, n.concept_id ASC
 """
 
 
-def model_request(path: str, body: dict | None = None) -> dict:
+def model_request(path: str, body: dict | None = None, *, timeout: float = 120) -> dict:
     payload = json.dumps(body).encode('utf-8') if body is not None else None
     request = Request(MODEL_URL + path, data=payload,
                       headers={'Content-Type': 'application/json'} if payload else {},
                       method='POST' if payload else 'GET')
     try:
-        with urlopen(request, timeout=120) as response:
+        with urlopen(request, timeout=timeout) as response:
             return json.load(response)
     except (HTTPError, URLError, TimeoutError, ValueError) as exc:
         raise RuntimeError(f'SapBERT model service unavailable or returned invalid data: {exc}') from exc

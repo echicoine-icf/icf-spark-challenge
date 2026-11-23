@@ -691,3 +691,23 @@ Extended the existing typed API with `measurement_candidate_ranking=source_evide
 - Model selection and MedGemma orchestration unchanged. Unenhanced original dbGaP corpus and provenance preserved.
 - Validation: backend URI safety tests and frontend TypeScript syntax/structural checks; real React/npm build and live API smoke remain workstation checks.
 <!-- SPARK_M72_END -->
+
+## Task 2 relevance judge / ranking explanations (v2.6)
+
+- Removed the interactive chat's fixed eight-result cap as the relevance boundary.
+- Added registered MedGemma tasks `task2_relevance_judge` and `task2_ranking_explainer` with live-reload prompt files and prompt hashes.
+- Deterministic original-corpus retrieval remains the candidate generator. MedGemma grades each reviewed candidate on a 0-3 relevance scale and reranks only from supplied original-corpus evidence.
+- Default normal-result threshold is grade 2+ (`Relevant` or `Strong Match`). Grade 0-1 candidates are excluded from normal interactive results when judging succeeds.
+- The API reports judged count, below-threshold count, whether an irrelevance boundary was encountered, and whether the configurable candidate-review window was exhausted first.
+- Ranking results preserve deterministic retrieval rank and the final AI-assisted rank. Opening a ranked study invokes MedGemma again through `task2_ranking_explainer` for a formal evidence-grounded explanation.
+- `/api/v1/task2/rank` keeps deterministic ranking by default and accepts `ai_rerank=true` for controlled comparisons/NDCG evaluation.
+- One explicit required characteristic is now valid; broad one-topic searches are no longer required to provide 2-8 characteristics.
+- Enrichment remains a separate, non-baseline prompt task and does not supply study evidence to this ranking layer.
+
+
+## Task 2 query knowledge providers (2026-11-22)
+
+- Verified the running PostgreSQL instance contains active MONDO `releases/2026-11-03` (92,235 terms), LOINC `2.83` (124,231 terms), RxNorm `2026-11-02` (119,711 terms), matching MONDO SapBERT vectors (92,235), and NCIt `26.10d` (213,746 concepts, 439,486 synonym rows). Migration 007 tables contain 4,199 dbGaP proposals and zero human reviews. See [the full inventory](TASK2_QUERY_KNOWLEDGE.md) for tables, indexes and versions.
+- The provider picker is hydrated from the API. Selected exact vocabularies authorize only unique, role-compatible aliases. SapBERT and local NCIt are review sources. NCIt is unavailable in submission mode without redistribution clearance. Reviewed annotations require an approved current fingerprint.
+- The engine keeps the original retrieval and judge intent, validates source-backed expansions, and records proposal, rejection, search and judged relevance counts. Result feedback makes at most one synthesis call per pass. Original-only batch evaluation remains available.
+- Regression checks cover exact labels and synonyms, SapBERT fallback, availability, source gating, measurement terms, and preservation of original query constraints. See the [provider runbook](TASK2_QUERY_KNOWLEDGE.md) for remaining limitations.

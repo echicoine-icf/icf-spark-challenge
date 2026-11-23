@@ -1,0 +1,6 @@
+/* Result evidence integrated into cards; no separate comparison mode. */
+.result-evidence-detail { margin-top: 12px; padding: 12px 14px; border: 1px solid #d9e2ee; border-radius: 10px; background: #f8faff; color: #1d2c42; }
+.result-evidence-detail > strong { display: block; font-size: .83rem; margin-bottom: 7px; }
+.result-evidence-detail > div { display: flex; flex-wrap: wrap; gap: 6px 12px; justify-content: space-between; margin-top: 5px; line-height: 1.4; }
+.result-evidence-detail > div > span { font-weight: 600; color: #1b2e49; }
+.result-evidence-detail > div > small { font-size: .81rem; color: #30435c; }

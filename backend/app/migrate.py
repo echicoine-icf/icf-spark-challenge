@@ -48,7 +48,8 @@ def apply_migrations(conn, files: list[Path]) -> list[tuple[str, str]]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--directory", type=Path, default=Path("/migrations"))
-    parser.add_argument("--through", type=int, choices=(2, 3, 4, 5, 6, 7), default=7)
+    parser.add_argument("--through", type=int, default=None,
+                        help="Apply migrations through this numeric prefix; default applies all available migrations")
     args = parser.parse_args()
     url = os.getenv("DATABASE_URL")
     if not url:

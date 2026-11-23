@@ -1,0 +1,9 @@
+services:
+  api:
+    environment:
+      SPARK_PROMPT_DIR: /config/prompts
+      SPARK_PROMPT_REGISTRY_FILE: registry.json
+    volumes:
+      - ./database/migrations:/migrations:ro
+      - corpus_data:/corpus:ro
+      - ./config/prompts:/config/prompts:ro

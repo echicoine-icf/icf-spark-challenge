@@ -23,15 +23,19 @@ from app.quality_search import (
     MAX_CANDIDATE_CAP,
 )
 
-app = FastAPI(title="ICF SPARK dbGaP API", version="0.1.0")
+app = FastAPI(title="ICF SPARK dbGaP API", version="0.8.0")
 
 # M7_MEDGEMMA_CHAT_ROUTE
-from app.concierge import router as medgemma_chat_router
+from app.concierge import router as medgemma_chat_router, task1_router, task2_router
 app.include_router(medgemma_chat_router)
+app.include_router(task1_router)
+app.include_router(task2_router)
 
-# SPARK_M72_RESOURCE_EXPLORER_ROUTE
-from app.resource_explorer import router as resource_explorer_router
-app.include_router(resource_explorer_router)
+# External resource retrieval is development-only. Task 2 submission/runtime is
+# fixed-snapshot and zero-egress, so this route is OFF unless explicitly enabled.
+if os.environ.get("SPARK_ENABLE_RESOURCE_EXPLORER", "0") == "1":
+    from app.resource_explorer import router as resource_explorer_router
+    app.include_router(resource_explorer_router)
 
 
 def db_connection():
@@ -74,11 +78,18 @@ def stats():
                 phenotype_variables = cur.fetchone()["count"]
                 cur.execute("SELECT count(*) AS count FROM variable_summaries")
                 variable_summaries = cur.fetchone()["count"]
+                cur.execute("SELECT to_regclass('public.task2_public_objects') AS table_name")
+                public_table = bool(cur.fetchone()["table_name"])
+                task2_public_objects = 0
+                if public_table:
+                    cur.execute("SELECT count(*) AS count FROM task2_public_objects")
+                    task2_public_objects = cur.fetchone()["count"]
         return {"studies": studies, "enrichments": enrichments,
                 "phenotype_datasets": phenotype_datasets,
                 "genotype_datasets": genotype_datasets,
                 "phenotype_variables": phenotype_variables,
-                "variable_summaries": variable_summaries}
+                "variable_summaries": variable_summaries,
+                "task2_public_objects": task2_public_objects}
     except psycopg.Error as exc:
         raise HTTPException(status_code=503, detail="Database unavailable") from exc
 
@@ -267,7 +278,17 @@ def get_study(study_id: str):
     try:
         with db_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute("""SELECT study_id, original_title, original_description, source_path
+                cur.execute("""SELECT study_id, original_title, original_description, source_path,
+                    source_record #> '{fields,study_disease_mesh_name}' AS mesh_labels,
+                    source_record #> '{fields,study_disease_mesh_id}' AS mesh_ids,
+                    (SELECT jsonb_object_agg(key, value)
+                     FROM jsonb_each(source_record->'fields')
+                     WHERE key IN ('disease_mesh_name', 'disease_mesh_id', 'disease_mesh_name_list',
+                                   'main_disease', 'study_main_disease', 'disease_medgen_name', 'disease_medgen_id',
+                                   'main_disease_medgen_name', 'main_disease_medgen_id', 'all_population',
+                                   'study_design', 'study_study_design', 'study_type', 'study_study_type',
+                                   'genotype_platform', 'study_genotype_platform', 'sample_use_display_name',
+                                   'study_sample_use_display_name')) AS terminology_fields
                     FROM studies WHERE study_id = %s""", (study_id,))
                 study = cur.fetchone()
                 if study is None:
@@ -278,13 +299,15 @@ def get_study(study_id: str):
                     LEFT JOIN phenotype_variables v ON v.dataset_id = p.dataset_id
                     WHERE p.study_id = %s
                     GROUP BY p.dataset_id
-                    ORDER BY p.dataset_id LIMIT 100""", (study_id,))
+                    ORDER BY p.dataset_id""", (study_id,))
                 phenotype = cur.fetchall()
                 cur.execute("""SELECT dataset_id, original_title, original_description, source_path
-                    FROM genotype_datasets WHERE study_id = %s ORDER BY dataset_id LIMIT 100""", (study_id,))
+                    FROM genotype_datasets WHERE study_id = %s ORDER BY dataset_id""", (study_id,))
                 genotype = cur.fetchall()
         return {"study": study, "phenotype_datasets": phenotype,
-                "genotype_datasets": genotype}
+                "genotype_datasets": genotype,
+                "dataset_counts": {"phenotype": len(phenotype), "genotype": len(genotype),
+                                   "total": len(phenotype) + len(genotype)}}
     except psycopg.Error as exc:
         raise HTTPException(status_code=503, detail="Database unavailable") from exc
 

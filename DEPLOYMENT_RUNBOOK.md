@@ -202,3 +202,7 @@ Google documentation supports prompt engineering/in-context learning without fin
 
 Study/dataset data is retrieved from the same original dbGaP endpoints; no inferred fields, verified LOINC mappings, fabricated study metrics, or database writes. Visual counts reflect the returned bounded API response, not all dbGaP records. External machine-readable content is untrusted and shown as data; it is not submitted to MedGemma or promoted to mappings. Browser IndexedDB is a local convenience cache, not an authoritative/server-wide knowledge store. Browser users can clear it. Browser storage may be unavailable in private mode.
 <!-- SPARK_M72_END -->
+
+## Task 2 query enrichment providers
+
+See [Task 2 query knowledge providers](TASK2_QUERY_KNOWLEDGE.md) for the live inventory, source versions, provenance and verification. Build `api` and `chat-ui` with the usual `compose.yaml`, `compose.chat.yaml` and `compose.task2.yaml` overrides. The API discovers active terminology and approved annotations in the existing database. SapBERT is available only when the local model is ready and has vectors matching its revision and the active release. Query enrichment has no database migration.

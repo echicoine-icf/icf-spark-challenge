@@ -1,8 +1,51 @@
-# ICF SPARK — dbGaP discovery prototype
+# ICF SPARK — Study Explorer
 
-**Milestone 1:** repeatable local Docker environment and inspection of the official NIH
-dbGaP snapshot. We are not claiming corpus ingestion, biomedical enrichment, vector
-retrieval, or Chainlit are complete yet.
+Study Explorer searches the NIH SPARK dbGaP snapshot, ranks studies, and supports query enrichment using local terminology and MedGemma. The application includes a React chat UI, FastAPI, PostgreSQL/pgvector, Ollama, and an optional local SapBERT service.
+
+## Data and model dependencies
+
+The source checkout alone does not contain the populated database, corpus, terminology archives, or model weights. Preparation imports these assets into persistent storage. Preserve exact releases and checksums when reproducing an installation.
+
+| Dependency | Local input / version recorded in this checkout | Obtain from |
+| --- | --- | --- |
+| Official SPARK dbGaP corpus | `../dbgap.tar.gz`; extracted into Docker volume `corpus_data` | [NIH challenge corpus](https://ftp.ncbi.nlm.nih.gov/dbgap/NLM_Challenge/dbgap.tar.gz), described on the [NIH SPARK challenge page](https://www.nih.gov/challenges/semantic-precision-ai-retrieval-knowledge-spark-dbgap-challenge) |
+| MONDO | `knowledge/MONDO.obo`; manifest release `releases/2026-11-03` | [MONDO distribution](https://purl.obolibrary.org/obo/mondo.obo). The current download may differ from the pinned release. |
+| LOINC | `knowledge/Loinc_2.83.zip` | [LOINC downloads](https://loinc.org/downloads). Obtain the required release through the provider and retain its license and copyright notices. |
+| RxNorm | `knowledge/RxNorm_full_prescribe_11022026.zip`; release `2026-11-02` | [NLM RxNorm files](https://www.nlm.nih.gov/research/umls/licensedcontent/rxnormfiles.html). This installation uses the prescribable-content archive. |
+| NCI Thesaurus (NCIt) | `knowledge/Thesaurus_26.10d.FLAT.zip` | [NCI EVS downloads](https://evs.nci.nih.gov/thesaurus-downloads) and [release archive](https://evs.nci.nih.gov/ftp1/NCI_Thesaurus/archive/) |
+| SapBERT | `models/sapbert/`; revision `090663c3ae57bf35ffe4d0d468a2a88d03051a4d` | [cambridgeltl/SapBERT-from-PubMedBERT-fulltext](https://huggingface.co/cambridgeltl/SapBERT-from-PubMedBERT-fulltext). Download preparation uses `model_server/download_model.py`. |
+| MedGemma | Local Ollama model selected by the running installation | [Google MedGemma models](https://huggingface.co/collections/google/medgemma-release). Record the actual Ollama model digest, conversion/quantization, upstream revision, and applicable terms before packaging a release. |
+| Historical development assets | Local guidance JSON and optional Qwen models used by annotation experiments | See the experiment commands and provenance in `DEPLOYMENT_RUNBOOK.md`. These require a separate inventory if distributing those experiments. |
+
+The pinned artifact manifest is [deployment/artifacts.json](deployment/artifacts.json). It records checksums for MONDO, LOINC, and RxNorm, and a SapBERT revision. NCIt, MedGemma, and the corpus checksum still need complete release records there before a reproducible release can be claimed. HPO and prototype variable annotations are not current query enrichment sources.
+
+The supplied corpus baseline is 3,578 studies, 16,070 phenotype datasets, 2,084 genotype datasets, 479,760 phenotype variables, and 1,095,137 variable summaries. See [DEPLOYMENT.md](DEPLOYMENT.md) for import, verification, and preparation commands. Study search indexes the complete stored source record. Database migrations build search structures from the imported metadata.
+
+## What belongs in Git
+
+Commit application code, Dockerfiles, Compose files, migrations, import/export scripts, prompt files, dependency lockfiles, documentation, and artifact manifests containing source URLs, release identifiers, licenses, and SHA-256 checksums. Commit configuration examples with placeholder credentials.
+
+Keep corpus archives, downloaded terminology, model weights, PostgreSQL dumps, Docker volume contents, generated caches, and secrets in external artifact storage. The existing `.gitignore` excludes many of these assets. Review staged files before each commit, especially new dump formats and generated receipts.
+
+## Preserving and distributing the knowledge layer
+
+Recommended packaging uses three versioned artifacts:
+
+1. Application images in a container registry, pinned by digest.
+2. A PostgreSQL custom-format snapshot in private object storage, such as an organization S3 bucket or Azure Blob container. Include the imported terminology, concepts, synonyms, embeddings, source provenance, and release metadata required by the selected release.
+3. Corpus and model files in separately versioned storage, subject to their distribution terms.
+
+Restore the database snapshot once into a persistent PostgreSQL volume during installation. Preserve a manifest with the application revision, PostgreSQL/pgvector versions, snapshot SHA-256, source releases, model revisions, and restoration instructions. Use object storage versioning and retain a known working snapshot before replacing it.
+
+A prebuilt application container does not capture the database in its mounted Docker volume. Shipping a raw PostgreSQL data directory inside an image also couples the data to PostgreSQL/platform details. A logical dump provides an explicit backup and restore path.
+
+The existing `python sparkctl.py knowledge-snapshot --output <dump> --snapshot-manifest <manifest>` and `knowledge-restore-snapshot --input <dump> --snapshot-manifest <manifest>` commands cover the NCIt knowledge subsystem. They do **not** constitute a complete export of the corpus, ontology tables, and all model embeddings. A complete release needs either a full application database dump or a documented selection of every required table. Browser-local Enhanced View caches also require separate treatment if they later become a permanent corpus layer.
+
+Use private storage for the initial bundle. Review each source's distribution terms before publishing a public bundle or database dump. License acknowledgement during import does not by itself document permission to redistribute all derived content. No shared artifact bucket, registry, or complete release snapshot has been provisioned by this documentation update.
+
+## Original local setup notes
+
+The following notes describe the initial scaffold. For the current deployment workflow use [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ## Prerequisites
 

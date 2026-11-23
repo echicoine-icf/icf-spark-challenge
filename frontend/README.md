@@ -1,6 +1,6 @@
-# ICF SPARK Research Concierge — branded frontend (M7.1)
+# ICF Study Explorer
 
-This is the implemented React/Vite frontend for the existing SPARK MedGemma research concierge. It retains the M7 backend contract and the original-only dbGaP metadata search; there are **no new backend routes, database migrations, or model changes**.
+This is the React/Vite frontend for the SPARK MedGemma research concierge. Study discovery uses original dbGaP metadata. The welcome screen loads one random question per category from the database through `GET /api/v1/chat/starter-prompts`.
 
 ## Functional screens
 
@@ -18,10 +18,11 @@ No example result cards, study counts, participant numbers, access URLs, or medi
 From the repository root **after M7 has already been installed**:
 
 ```bash
-docker compose -f compose.yaml -f compose.chat.yaml --profile ai up -d --build --no-deps chat-ui
+docker compose -f compose.yaml -f compose.chat.yaml -f compose.task2.yaml --profile ai up -d --build --no-deps --wait api chat-ui
+docker compose -f compose.yaml -f compose.chat.yaml -f compose.task2.yaml --profile ai exec -T api python -m app.migrate --through 12
 ```
 
-If you normally use GPU overlay for Ollama, add `-f compose.gpu.yaml` before `--profile ai`. This command rebuilds only the frontend; it preserves existing containers and volumes.
+If you normally use the GPU overlay for Ollama, add `-f compose.gpu.yaml` before `--profile ai`. Migration 012 seeds 25 example questions per category.
 
 Open <http://127.0.0.1:18081> or the configured `CHAT_PORT`.
 
