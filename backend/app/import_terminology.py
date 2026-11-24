@@ -1,4 +1,4 @@
-"""Offline, transaction-safe importer for pinned LOINC and RxNorm ZIP releases.
+"""Offline, transaction-safe importer for pinned LOINC, RxNorm, and SNOMED CT US ZIP releases.
 
 The supplied archives are never downloaded here. Registry rows are immutable by
 (ontology, release) and source SHA-256. Stage/COPY + set-based inserts make the
@@ -17,10 +17,13 @@ from app.ontology_knowledge import normalize_term, sha256_file
 from app.terminology_files import read_records, validate_release_filename
 
 MIGRATION = Path('/migrations/006_typed_terminology_sources.sql')
+SNOMED_MIGRATION = Path('/migrations/021_snomed_ct_us.sql')
 DEFAULT_SOURCES = {
     'LOINC': ('https://loinc.org/downloads', 'LOINC License (https://loinc.org/license)'),
     'RXNORM': ('https://www.nlm.nih.gov/research/umls/licensedcontent/rxnormfiles.html',
                'NLM RxNorm Prescribable Content terms of service; SAB=RXNORM only'),
+    'SNOMEDCT_US': ('https://www.nlm.nih.gov/healthit/snomedct/us_edition.html',
+                     'SNOMED CT Affiliate License / UMLS Terminology Services'),
 }
 
 
@@ -86,6 +89,8 @@ def import_release(cur, ontology: str, release: str, source: Path, *, uri: str,
     """Caller owns a single transaction. Error = entire new release rolls back."""
     digest = sha256_file(source)
     cur.execute(MIGRATION.read_text(encoding='utf-8'))
+    if ontology == 'SNOMEDCT_US':
+        cur.execute(SNOMED_MIGRATION.read_text(encoding='utf-8'))
     cur.execute('''SELECT source_sha256, imported_concepts, imported_terms
                    FROM ontology_releases WHERE ontology=%s AND ontology_release=%s''',
                 (ontology, release))
@@ -128,7 +133,7 @@ def main():
     parser.add_argument('--file', type=Path, required=True)
     parser.add_argument('--ontology', choices=tuple(DEFAULT_SOURCES), required=True)
     parser.add_argument('--release', required=True,
-                        help='Explicit immutable upstream release ID, e.g. 2.83 or 2026-11-02')
+                        help='Explicit immutable upstream release ID, e.g. 2.83, 2026-11-02, or 20260901')
     parser.add_argument('--source-uri', help='Public upstream distribution page')
     parser.add_argument('--activate', action='store_true')
     parser.add_argument('--ack-license', action='store_true',

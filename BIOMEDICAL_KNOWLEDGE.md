@@ -83,3 +83,16 @@ abnormalities require a verified `HP:0000118` ancestry path; laboratory
 measurements and medications are explicitly unavailable until licensed LOINC
 and RxNorm adapters are installed. See `CONCEPT_NORMALIZATION.md` for usage
 and limitations. No study metadata is generated or modified by this feature.
+
+
+## November 23, 2026 — SNOMED CT US integration
+
+The earlier milestone notes above describe the state at the time they were written. The current code now includes a local, version-pinned **SNOMED CT US Edition RF2 adapter** alongside the existing LOINC and RxNorm adapters. The repository does **not** contain SNOMED CT release content. A licensed user must obtain the US Edition from NLM/UMLS Terminology Services and place the RF2 ZIP under `knowledge/` before import.
+
+The interactive Enhanced View is the pre-corpus normalization workbench. Its variable-processing path is intentionally limited to **SNOMED CT US, LOINC, and RxNorm**. MONDO and SapBERT are not used to normalize Enhanced View variables. MedGemma may interpret source text and adjudicate bounded terminology candidates, but it cannot invent a concept or turn semantic similarity into an exact mapping. A unique exact label/synonym match from the original dbGaP variable text can be deterministic; a match reached only through a model-derived lookup phrase remains reviewable.
+
+SNOMED CT concepts are stored with the internal namespace `SNOMEDCT_US:<SCTID>`. The RF2 importer reads the active Concept Snapshot, active en-US Description Snapshot, and active en-US Language refset. Preferred en-US terms become canonical labels and active same-concept synonyms become exact aliases. The FSN semantic tag supplies a conservative local type (`disease`, `phenotype`, or generic `clinical_concept`); it is provenance for filtering, not a claim that the entire SNOMED hierarchy has been imported.
+
+Query enhancement also exposes SNOMED CT US as a validated terminology provider after a local release is imported and activated. For disease/phenotype exact matching it is preferred before legacy MONDO/HPO fallback. MONDO, NCIt, and SapBERT may still be retained as query-side experimental/review providers, but they are not part of the Enhanced View variable-normalization decision path.
+
+See `SNOMED_CT_INTEGRATION.md` for import, verification, Enhanced View behavior, and rollback.

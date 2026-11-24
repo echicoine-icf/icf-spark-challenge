@@ -8,16 +8,21 @@ from app.concept_normalization import normalize_concept
 from app.ontology_knowledge import normalize_term
 from app.sapbert_search import model_request, semantic_resolve
 from app.variable_annotations import load_approved
+from app.umls_api import UMLSAPIError, api_version as umls_api_version, configured as umls_configured, search as umls_search
 
-ProviderId = Literal["mondo", "hpo", "loinc", "rxnorm", "sapbert", "ncit", "dbgap_annotations", "retrieved_evidence"]
+ProviderId = Literal["snomed", "mondo", "hpo", "loinc", "rxnorm", "sapbert", "ncit", "umls", "dbgap_annotations", "retrieved_evidence"]
 EXACT_PROVIDERS = {
+    # SNOMED CT is preferred first for disease/phenotype/other clinical terms.
+    # MONDO/HPO remain query-side fallbacks/experiments but are not used by the
+    # Enhanced View variable-normalization workbench.
+    "snomed": ("SNOMED CT US", "SNOMEDCT_US", None),
     "mondo": ("MONDO", "MONDO", "disease"),
     "hpo": ("HPO", "HP", "phenotype"),
     "loinc": ("LOINC", "LOINC", "laboratory_measurement"),
     "rxnorm": ("RxNorm", "RXNORM", "medication"),
 }
 LEGACY_TERMINOLOGY = (*EXACT_PROVIDERS, "sapbert")
-CHAT_QUERY_PROVIDERS = frozenset({"mondo", "loinc", "rxnorm", "sapbert", "ncit", "retrieved_evidence"})
+CHAT_QUERY_PROVIDERS = frozenset({"snomed", "mondo", "loinc", "rxnorm", "sapbert", "ncit", "umls", "retrieved_evidence"})
 REQUIREMENT_TYPES = {
     "disease": "disease", "measurement": "laboratory_measurement",
     "medication": "medication", "exposure": "medication", "other": "auto",
@@ -29,10 +34,11 @@ def provider_catalog(cur, selected: set[str] | frozenset[str] | None = None) -> 
     def wanted(provider):
         return selected is None or provider in selected
 
-    def option(provider, label, category, available, capabilities, *, version=None, reason=None):
+    def option(provider, label, category, available, capabilities, *, version=None, reason=None, default_selected=None):
+        selected = available if default_selected is None else bool(default_selected and available)
         return {"id": provider, "label": label, "category": category, "available": available,
                 "version": version, "capabilities": capabilities, "reason": reason,
-                "default_selected": available}
+                "default_selected": selected}
 
     output = []
     if any(wanted(key) for key in (*EXACT_PROVIDERS, "sapbert")):
@@ -67,6 +73,15 @@ def provider_catalog(cur, selected: set[str] | frozenset[str] | None = None) -> 
             output.append({**option("sapbert", "SapBERT", "semantic", bool(scopes), ["review_candidates"],
                                     version=revision, reason=None if scopes else "No ready model with a matching active index"),
                            "indexed_ontologies": sorted(scopes)})
+
+    if wanted("umls"):
+        available = umls_configured()
+        output.append(option(
+            "umls", "UMLS Metathesaurus API", "reference", available, ["cui_candidates"],
+            version=umls_api_version(),
+            reason=None if available else "UMLS_API_KEY is not configured",
+            default_selected=False,
+        ))
 
     if wanted("ncit"):
         cur.execute("SELECT to_regclass('public.spark_kb_releases') AS releases,"
@@ -128,14 +143,28 @@ def collect_provider_knowledge(cur, terms: list[str], roles: list[str], provider
         exact = []
         conflicting = False
         for key, (_, namespace, concept_type) in EXACT_PROVIDERS.items():
-            if key not in enabled or expected_type not in {"auto", concept_type}:
+            if key not in enabled:
                 continue
-            resolution = normalize_concept(cur, term, expected_type=concept_type, ontology=namespace,
+            if key == "snomed":
+                if expected_type not in {"auto", "disease", "phenotype"}:
+                    continue
+                provider_type = expected_type
+            else:
+                if expected_type not in {"auto", concept_type}:
+                    continue
+                provider_type = concept_type
+            resolution = normalize_concept(cur, term, expected_type=provider_type, ontology=namespace,
                                            include_semantic=False, max_expansions=3)
             if resolution["status"] == "normalized_exact":
+                # Provider order is intentional. For a disease/phenotype term,
+                # prefer a precise SNOMED CT exact match; fall back to MONDO/HPO
+                # only when SNOMED has no exact concept. Do not blend aliases
+                # across distinct vocabularies as if they were equivalent.
                 exact.append((key, resolution["normalized_concept"], resolution["expansions"]))
+                break
             elif resolution["status"] in {"ambiguous_exact", "unclassified_exact", "type_mismatch"}:
                 conflicting = True
+                break
 
         entry = {"term": term, "requirement_index": index, "status": "not_found", "knowledge": [], "aliases": []}
         lookups.append(entry)
@@ -192,4 +221,21 @@ def collect_provider_knowledge(cur, terms: list[str], roles: list[str], provider
                     term, "ncit", "reference_match", concept_id=row["concept_id"],
                     canonical_label=row["label"], version=row["release"],
                 ))
+
+        if "umls" in enabled:
+            semantic_group = "Disorders" if expected_type == "disease" else None
+            try:
+                for candidate in umls_search(term, limit=3, semantic_group=semantic_group):
+                    entry["knowledge"].append(_knowledge(
+                        candidate["label"], "umls", "umls_cui_candidate",
+                        concept_id=candidate["concept_id"], canonical_label=candidate["label"],
+                        version=candidate["ontology_release"], validated=False,
+                        evidence=[{
+                            "semantic_types": candidate.get("semantic_types", []),
+                            "root_source": candidate.get("root_source"),
+                            "match_basis": candidate.get("match_basis"),
+                        }],
+                    ))
+            except UMLSAPIError:
+                entry["umls_unavailable"] = True
     return lookups, annotations

@@ -48,6 +48,7 @@ type KnowledgeProvider = {
   available: boolean;
   version?: string | null;
   reason?: string | null;
+  default_selected?: boolean;
 };
 type QueryKnowledge = {
   term: string; canonical_label: string; concept_id: string; source_type: string;
@@ -449,11 +450,14 @@ function DetailsPanel({ studyId, rankingResult, saved, onSave, onClose, onWiden,
   const shownDatasets = (datasets || []).filter(d => !datasetFilter.trim() || [d.dataset_id, d.original_title, d.original_description].join(' ').toLowerCase().includes(datasetFilter.toLowerCase().trim()));
   const rawMeshLabels = data?.study.mesh_labels;
   const rawMeshIds = data?.study.mesh_ids;
-  const meshLabels = typeof rawMeshLabels === 'string' ? [rawMeshLabels] : rawMeshLabels ?? [];
-  const meshIds = typeof rawMeshIds === 'string' ? [rawMeshIds] : rawMeshIds ?? [];
+  const meshLabels = (typeof rawMeshLabels === 'string' ? [rawMeshLabels] : rawMeshLabels ?? [])
+    .map(value => String(value).trim()).filter(Boolean);
+  const meshIds = (typeof rawMeshIds === 'string' ? [rawMeshIds] : rawMeshIds ?? [])
+    .map(value => String(value).trim()).filter(Boolean);
   const terminology = Object.entries(data?.study.terminology_fields ?? {}).map(([field, value]) => ({
     field,
-    values: [...new Set((Array.isArray(value) ? value : value?.split(' | ') ?? []).filter(Boolean))],
+    values: [...new Set((Array.isArray(value) ? value : value?.split(' | ') ?? [])
+      .map(item => String(item).trim()).filter(Boolean))],
   })).filter(({ values }) => values.length);
   const phenotypeCount = data?.phenotype_datasets.length ?? 0;
   const genotypeCount = data?.genotype_datasets.length ?? 0;
@@ -464,7 +468,14 @@ function DetailsPanel({ studyId, rankingResult, saved, onSave, onClose, onWiden,
     {!studyId && <div className="details-empty"><div className="empty-database"><Icon name="database" size={32} /></div><h3>Explore the source data</h3><p>Select any search result to review its original study details, phenotype datasets, and genotype datasets.</p><div className="empty-hint"><Icon name="info" size={17} /> Original dbGaP metadata only</div></div>}
     {studyId && data && <div className="record-tabs-fixed">
         <div className={`record-tab-header${focusedDataset ? '' : ' record-enhancement-tabs'}`} role="tablist" aria-label="Selected dbGaP record format">
-          {(focusedDataset ? ['overview', 'json', 'xml', 'raw'] as const : ['overview', 'enhanced', 'json', 'xml', 'raw'] as const).map(kind => <button key={kind} type="button" role="tab" aria-selected={recordTab === kind} className={recordTab === kind ? 'active' : ''} onClick={() => setRecordTab(kind)}>{kind === 'enhanced' ? 'Enhanced View' : kind === 'json' ? 'JSON' : kind === 'xml' ? 'XML' : kind === 'raw' ? 'Raw' : 'Overview'}</button>)}
+          {(focusedDataset ? ['overview', 'json', 'xml', 'raw'] as const : ['overview', 'enhanced', 'json', 'xml', 'raw'] as const).map(kind => {
+            const classes = [
+              recordTab === kind ? 'active' : '',
+              kind === 'enhanced' ? 'record-tab-normalization' : '',
+              kind === 'json' || kind === 'xml' || kind === 'raw' ? 'record-tab-machine' : '',
+            ].filter(Boolean).join(' ');
+            return <button key={kind} type="button" role="tab" aria-selected={recordTab === kind} className={classes} onClick={() => setRecordTab(kind)}>{kind === 'enhanced' ? 'Variable Normalization' : kind === 'json' ? 'JSON' : kind === 'xml' ? 'XML' : kind === 'raw' ? 'Raw' : 'Overview'}</button>;
+          })}
         </div>
     </div>}
     {studyId && <div className="details-body" key={studyId} ref={detailsBodyRef}>
@@ -479,36 +490,6 @@ function DetailsPanel({ studyId, rankingResult, saved, onSave, onClose, onWiden,
         {recordTab === 'overview' ? <>
           {focusedDataset ? <div className="detail-identity"><div className="result-icon large"><Icon name="database" size={25} /></div><div><h3>{focusedDataset.original_title || 'Untitled dataset'}</h3><span className="detail-accession">{focusedDataset.dataset_id}</span></div></div> : <>
         <div className="detail-identity"><div className="result-icon large"><Icon name="database" size={26} /></div><div><h3>{data.study.original_title || 'Untitled study'}</h3><span className="detail-accession">{data.study.study_id}</span></div></div>
-        <SourceLinks className="detail-description" text={data.study.original_description || 'No source description was supplied for this study.'} />{fromCache && <p className="local-cache-indicator"><Icon name="check" size={14} /> Restored from your browser’s resource cache</p>}
-        {(meshLabels.length > 0 || meshIds.length > 0) && <details className="extra-queries study-terminology" key={data.study.study_id}>
-          <summary className="extra-queries-heading">Study MeSH terms</summary>
-          <div className="extra-query-table"><table>
-            <thead><tr><th scope="col">MeSH term</th><th scope="col">MeSH identifier</th></tr></thead>
-            <tbody>{(meshLabels.length === meshIds.length
-              ? meshLabels.map((label, index) => [label, meshIds[index]])
-              : [...meshLabels.map(label => [label, '']), ...meshIds.map(id => ['', id])]
-            ).map(([label, id], index) => <tr key={index}>
-              <td>{label || '—'}</td>
-              <td>{id ? <a href={`http://id.nlm.nih.gov/mesh/${encodeURIComponent(id)}`} target="_blank" rel="noreferrer">{id}</a> : '—'}</td>
-            </tr>)}</tbody>
-          </table></div>
-        </details>}
-        {([true, false] as const).map(isMesh => {
-          const rows = terminology.filter(({ field }) => field.startsWith('disease_mesh_') === isMesh);
-          if (!rows.length) return null;
-          return <details className="extra-queries study-terminology" key={`${data.study.study_id}-${isMesh}`}>
-            <summary className="extra-queries-heading">{isMesh ? 'Additional MeSH metadata' : 'Other dbGaP terminology'}</summary>
-            <div className="extra-query-table"><table>
-              <thead><tr><th scope="col">dbGaP field</th><th scope="col">Terms and identifiers</th></tr></thead>
-              <tbody>{rows.map(({ field, values }) => <tr key={field}>
-                <th scope="row">{field.replaceAll('_', ' ').replace('mesh', 'MeSH').replace('medgen', 'MedGen')}</th>
-                <td>{field === 'disease_mesh_id' ? values.map((id, index) => <span key={id}>
-                  {index > 0 && ', '}<a href={`http://id.nlm.nih.gov/mesh/${encodeURIComponent(id)}`} target="_blank" rel="noreferrer">{id}</a>
-                </span>) : values.join(', ')}</td>
-              </tr>)}</tbody>
-            </table></div>
-          </details>;
-        })}
         {rankingResult?.rank && <section className="ranking-explanation" aria-label="Ranking explanation">
           <div className="ranking-explanation-head"><h4>Why this ranked #{rankingResult.rank}</h4><span className={`relevance-badge relevance-${rankingResult.relevance_label || 'unjudged'}`}>{relevanceLabel(rankingResult)}</span></div>
           {(rankingResult.deterministic_rank || typeof rankingResult.relevance_confidence === 'number') && <div className="ranking-facts">{rankingResult.deterministic_rank && <span>Retrieved <strong>#{rankingResult.deterministic_rank}</strong></span>}{typeof rankingResult.relevance_confidence === 'number' && <span>Confidence <strong>{Math.round(rankingResult.relevance_confidence * 100)}%</strong></span>}</div>}
@@ -525,6 +506,36 @@ function DetailsPanel({ studyId, rankingResult, saved, onSave, onClose, onWiden,
             <li><strong>Match</strong> The original dbGaP study title directly names the requested topic.</li>
           </ul>}
         </section>}
+        <SourceLinks className="detail-description" text={data.study.original_description || 'No source description was supplied for this study.'} />{fromCache && <p className="local-cache-indicator"><Icon name="check" size={14} /> Restored from your browser’s resource cache</p>}
+        {(meshLabels.length > 0 || meshIds.length > 0) && <details className="extra-queries study-terminology" key={data.study.study_id} open>
+          <summary className="extra-queries-heading">Study MeSH terms</summary>
+          <div className="extra-query-table"><table>
+            <thead><tr><th scope="col">MeSH term</th><th scope="col">MeSH identifier</th></tr></thead>
+            <tbody>{(meshLabels.length === meshIds.length
+              ? meshLabels.map((label, index) => [label, meshIds[index]])
+              : [...meshLabels.map(label => [label, '']), ...meshIds.map(id => ['', id])]
+            ).map(([label, id], index) => <tr key={index}>
+              <td>{label || '—'}</td>
+              <td>{id ? <a href={`http://id.nlm.nih.gov/mesh/${encodeURIComponent(id)}`} target="_blank" rel="noreferrer">{id}</a> : '—'}</td>
+            </tr>)}</tbody>
+          </table></div>
+        </details>}
+        {([true, false] as const).map(isMesh => {
+          const rows = terminology.filter(({ field }) => field.startsWith('disease_mesh_') === isMesh);
+          if (!rows.length) return null;
+          return <details className="extra-queries study-terminology" key={`${data.study.study_id}-${isMesh}`} open>
+            <summary className="extra-queries-heading">{isMesh ? 'Additional MeSH metadata' : 'Other dbGaP terminology'}</summary>
+            <div className="extra-query-table"><table>
+              <thead><tr><th scope="col">dbGaP field</th><th scope="col">Terms and identifiers</th></tr></thead>
+              <tbody>{rows.map(({ field, values }) => <tr key={field}>
+                <th scope="row">{field.replaceAll('_', ' ').replace('mesh', 'MeSH').replace('medgen', 'MedGen')}</th>
+                <td>{field === 'disease_mesh_id' ? values.map((id, index) => <span key={id}>
+                  {index > 0 && ', '}<a href={`http://id.nlm.nih.gov/mesh/${encodeURIComponent(id)}`} target="_blank" rel="noreferrer">{id}</a>
+                </span>) : values.join(', ')}</td>
+              </tr>)}</tbody>
+            </table></div>
+          </details>;
+        })}
         <div className="detail-stat"><span><Icon name="database" size={17} /> Phenotype datasets</span><strong>{data.phenotype_datasets.length}</strong></div>
         <div className="detail-stat"><span><Icon name="layers" size={17} /> Genotype datasets</span><strong>{data.genotype_datasets.length}</strong></div>
         <div className="detail-stat"><span><Icon name="info" size={17} /> Evidence level</span><strong>Source metadata</strong></div>
@@ -648,7 +659,15 @@ export default function ChatApp() {
     const controller = new AbortController();
     setProviderError(false);
     getJSON<{ providers: KnowledgeProvider[] }>('/api/v1/task2/query-providers', { signal: controller.signal })
-      .then(({ providers }) => { if (!controller.signal.aborted) setKnowledgeProviders(providers); })
+      .then(({ providers }) => {
+        if (!controller.signal.aborted) {
+          setKnowledgeProviders(providers);
+          setExcludedProviders(previous => [...new Set([
+            ...previous,
+            ...providers.filter(provider => provider.available && provider.default_selected === false).map(provider => provider.id),
+          ])]);
+        }
+      })
       .catch(() => { if (!controller.signal.aborted) setProviderError(true); });
     return () => controller.abort();
   }, []);
@@ -801,7 +820,7 @@ export default function ChatApp() {
             {messages.length === 0 ? <>
               <section className="hero" aria-labelledby="research-heading">
                 <div className="hero-content">
-                  <p className="hero-eyebrow">NIH SPARK · dbGaP Task 2</p>
+                  <p className="hero-eyebrow">NIH SPARK · dbGaP</p>
                   <h1 id="research-heading">Explore dbGaP studies</h1>
                   <p>Ask a research question to find ranked studies and explore their original datasets.</p>
                 </div>
@@ -922,7 +941,7 @@ export default function ChatApp() {
           {view === 'history' && <><div className="section-heading"><span className="section-eyebrow">YOUR WORKSPACE</span><h1>Chat history</h1><p>Resume an earlier research conversation or start a new one.</p></div>{recentSessions.length === 0 ? <EmptySection icon="clock" title="No conversations yet" description="Start a new research chat and your conversation will appear here." /> : <div className="history-list">{recentSessions.map(s => <div className="history-item" key={s.id}><button className="history-open" onClick={() => openSession(s.id)}><Icon name="chat" size={19} /><span><strong>{s.title}</strong><small>{dateLabel(s.updatedAt)} · {s.messages.length} messages</small></span><Icon name="chevron" size={18} /></button><button className="icon-button" aria-label={`Delete conversation ${s.title}`} title="Delete conversation" onClick={() => deleteSession(s.id)}><Icon name="trash" size={18} /></button></div>)}</div>}</>}
           {view === 'datasets' && <><div className="section-heading"><span className="section-eyebrow">DISCOVERY HISTORY</span><h1>Discovered studies</h1><p>Studies returned in your recent research conversations. Select a study to inspect its original datasets.</p></div>{recentStudies.length === 0 ? <EmptySection icon="database" title="No studies discovered yet" description="Search for a biomedical topic to populate your discovery list." /> : <div className="dataset-results">{recentStudies.map((study, index) => <ResultCard key={study.study_id} result={study} index={index} onOpen={openRankedStudy} onSave={toggleSaveFromResult} saved={saved.some(s => s.study_id === study.study_id)} />)}</div>}</>}
           {view === 'usecases' && <><div className="section-heading"><span className="section-eyebrow">GET STARTED</span><h1>Research use cases</h1><p>Choose an example to start a new MedGemma-powered search against the original dbGaP corpus.</p></div><div className="usecase-grid">{suggestions.map(item => <button className="usecase-card" key={item.title} onClick={() => { void send(item.prompt, true); }}><span className="starter-icon"><Icon name={item.icon} size={22} /></span><strong>{item.title}</strong><p>{item.prompt}</p><span className="usecase-action">Start research <Icon name="arrow" size={16} /></span></button>)}</div></>}
-          {view === 'help' && <><div className="section-heading"><span className="section-eyebrow">ABOUT THIS PROTOTYPE</span><h1>Help & resources</h1><p>How to find and inspect dbGaP studies with ICF Study Explorer.</p></div><div className="help-panels"><div className="help-panel"><div className="result-icon"><Icon name="chat" /></div><div><h3>Ask MedGemma about a research topic</h3><p>Start a conversation using everyday language. The model requests a backend-controlled search of original dbGaP metadata, then describes returned results.</p></div></div><div className="help-panel"><div className="result-icon"><Icon name="spark" /></div><div><h3>Enrich a research query</h3><p>Query Enrichment searches for alternative terms using the selected terminology sources. MedGemma can also review retrieved study descriptions for source-supported terms and run additional searches, up to the limit you choose. The app combines new candidates with the original results and ranks them against your original question. Open Query enrichment in the results to see the searches, and use Filter studies to compare original and added results. SapBERT suggestions and reference matches are candidates for review, not automatically verified equivalents.</p></div></div><div className="help-panel"><div className="result-icon"><Icon name="database" /></div><div><h3>Inspect actual study and dataset records</h3><p>Use “View details” to see original study descriptions and phenotype/genotype dataset listings. No example studies are fabricated for the interface.</p></div></div><div className="help-panel"><div className="result-icon"><Icon name="bookmark" /></div><div><h3>Save work locally</h3><p>Chat history and saved studies are stored only in this browser. This demonstration has no user accounts or shared storage.</p></div></div><div className="help-panel"><div className="result-icon"><Icon name="info" /></div><div><h3>Interpret results cautiously</h3><p>Source-text matches are not confirmed clinical terminology mappings. Verify relevance and access requirements from the original dbGaP records.</p></div></div></div></>}
+          {view === 'help' && <><div className="section-heading"><span className="section-eyebrow">ABOUT THIS PROTOTYPE</span><h1>Help & resources</h1><p>How to find and inspect dbGaP studies with ICF Study Explorer.</p></div><div className="help-panels"><div className="help-panel"><div className="result-icon"><Icon name="chat" /></div><div><h3>Ask MedGemma about a research topic</h3><p>Start a conversation using everyday language. The model requests a backend-controlled search of original dbGaP metadata, then describes returned results.</p></div></div><div className="help-panel"><div className="result-icon"><Icon name="spark" /></div><div><h3>Enrich a research query</h3><p>Query Enrichment searches for alternative terms using the selected terminology sources. MedGemma can also review retrieved study descriptions for source-supported terms and run additional searches, up to the limit you choose. The app combines new candidates with the original results and ranks them against your original question. Open Query enrichment in the results to see the searches, and use Filter studies to compare original and added results. SapBERT, NCIt, and UMLS reference matches are candidates for review, not automatically verified equivalents. UMLS is optional and starts disabled.</p></div></div><div className="help-panel"><div className="result-icon"><Icon name="database" /></div><div><h3>Inspect actual study and dataset records</h3><p>Use “View details” to see original study descriptions and phenotype/genotype dataset listings. No example studies are fabricated for the interface.</p></div></div><div className="help-panel"><div className="result-icon"><Icon name="bookmark" /></div><div><h3>Save work locally</h3><p>Chat history and saved studies are stored only in this browser. This demonstration has no user accounts or shared storage.</p></div></div><div className="help-panel"><div className="result-icon"><Icon name="info" /></div><div><h3>Interpret results cautiously</h3><p>Source-text matches are not confirmed clinical terminology mappings. Verify relevance and access requirements from the original dbGaP records.</p></div></div></div></>}
         </motion.div>}
       </motion.main>
       <AnimatePresence initial={false}>

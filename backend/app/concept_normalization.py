@@ -15,11 +15,11 @@ from app.ontology_search import resolve as resolve_exact, search_ontology, conce
 from app.ontology_knowledge import normalize_term
 
 EXPECTED_TYPES = ('auto', 'disease', 'phenotype', 'medication', 'laboratory_measurement')
-SUPPORTED_ONTOLOGIES = ('MONDO', 'HP', 'LOINC', 'RXNORM')
+SUPPORTED_ONTOLOGIES = ('MONDO', 'HP', 'LOINC', 'RXNORM', 'SNOMEDCT_US')
 TYPE_ONTOLOGIES = {
-    'auto': ('MONDO', 'HP', 'LOINC', 'RXNORM'),
-    'disease': ('MONDO',),
-    'phenotype': ('HP',),
+    'auto': ('SNOMEDCT_US', 'LOINC', 'RXNORM', 'MONDO', 'HP'),
+    'disease': ('SNOMEDCT_US', 'MONDO'),
+    'phenotype': ('SNOMEDCT_US', 'HP'),
     'medication': ('RXNORM',),
     'laboratory_measurement': ('LOINC',),
 }
@@ -70,7 +70,7 @@ def active_release_names(cur, ontologies: tuple[str, ...]) -> set[str]:
 
 
 def fetch_typed_metadata(cur, rows: list[dict]) -> dict[tuple[str, str, str], dict]:
-    ids = sorted({r['concept_id'] for r in rows if r['ontology'] in ('LOINC', 'RXNORM')})
+    ids = sorted({r['concept_id'] for r in rows if r['ontology'] in ('LOINC', 'RXNORM', 'SNOMEDCT_US')})
     if not ids:
         return {}
     cur.execute("""SELECT m.ontology, m.ontology_release, m.concept_id,
@@ -78,7 +78,7 @@ def fetch_typed_metadata(cur, rows: list[dict]) -> dict[tuple[str, str, str], di
                    FROM terminology_concept_metadata m
                    JOIN ontology_active_releases a
                      ON a.ontology=m.ontology AND a.ontology_release=m.ontology_release
-                   WHERE m.ontology IN ('LOINC','RXNORM')
+                   WHERE m.ontology IN ('LOINC','RXNORM','SNOMEDCT_US')
                      AND m.concept_id=ANY(%s::text[])""", (ids,))
     return {(r['ontology'], r['ontology_release'], r['concept_id']): r for r in cur.fetchall()}
 
@@ -89,7 +89,7 @@ def type_concept(row: dict, hpo_ids: set[tuple[str, str]],
         return 'disease'
     if row['ontology'] == 'HP' and (row['ontology_release'], row['concept_id']) in hpo_ids:
         return 'phenotype'
-    if row['ontology'] in ('LOINC', 'RXNORM'):
+    if row['ontology'] in ('LOINC', 'RXNORM', 'SNOMEDCT_US'):
         meta = (typed_meta or {}).get((row['ontology'], row['ontology_release'], row['concept_id']))
         if not meta or meta['source_status'] != 'ACTIVE':
             return 'unclassified'
@@ -100,6 +100,9 @@ def type_concept(row: dict, hpo_ids: set[tuple[str, str]],
         if row['ontology'] == 'RXNORM' and meta['concept_type'] == 'medication' \
                 and meta['subtype'] in RXNORM_MAIN_TTYS:
             return 'medication'
+        if row['ontology'] == 'SNOMEDCT_US' and meta['concept_type'] in {
+                'disease', 'phenotype', 'clinical_concept'}:
+            return meta['concept_type']
     return 'unclassified'
 
 
@@ -115,8 +118,10 @@ def label_exact_candidates(term: str, rows: list[dict], hpo_ids: set[tuple[str, 
                                else 'ontology_exact_synonym')
         meta = (typed_meta or {}).get((row['ontology'],row['ontology_release'],row['concept_id']))
         item['concept_subtype'] = meta['subtype'] if meta else None
-        item['type_provenance'] = ('MONDO_ontology_namespace' if item['concept_type'] == 'disease'
-              else 'HP_0000118_is_a_ancestry' if item['concept_type'] == 'phenotype'
+        item['type_provenance'] = ('SNOMED_CT_US_active_FSN_semantic_tag'
+              if row['ontology'] == 'SNOMEDCT_US' and item['concept_type'] != 'unclassified'
+              else 'MONDO_ontology_namespace' if row['ontology'] == 'MONDO' and item['concept_type'] == 'disease'
+              else 'HP_0000118_is_a_ancestry' if row['ontology'] == 'HP' and item['concept_type'] == 'phenotype'
               else 'LOINC_ACTIVE_class_type_1' if item['concept_type'] == 'laboratory_measurement'
               else 'RXNORM_active_SAB_RXNORM_TTY' if item['concept_type'] == 'medication'
               else 'no_validated_type_path')
@@ -175,9 +180,29 @@ def normalize_concept(cur, term: str, *, expected_type: str = 'auto',
         return {**base, 'status': 'ontology_type_mismatch',
                 'review_reason': f'{ontology} does not authorize {expected_type} concept typing'}
 
-    exact_scope = ontology or (allowed[0] if len(allowed) == 1 else None)
-    exact = resolve_exact(cur, term, ontology=exact_scope, limit=0)
-    original_rows = exact.get('concepts', [])
+    if ontology is not None or len(allowed) == 1:
+        exact_scope = ontology or allowed[0]
+        exact = resolve_exact(cur, term, ontology=exact_scope, limit=0)
+        original_rows = exact.get('concepts', [])
+    else:
+        # Resolve each allowed namespace independently. Passing ontology=None to
+        # ontology_search.resolve would search every active vocabulary, including
+        # sources that do not authorize the requested biomedical type.
+        original_rows = []
+        truncated = False
+        for namespace in allowed:
+            scoped_exact = resolve_exact(cur, term, ontology=namespace, limit=0)
+            original_rows.extend(scoped_exact.get('concepts', []))
+            truncated = truncated or bool(scoped_exact.get('matches_truncated'))
+        # One exact resolver call per namespace can surface the same synthetic/mock
+        # row more than once (and defensive deduplication is cheap in production).
+        # Ambiguity should mean multiple concept identities, not duplicate rows.
+        deduped = {}
+        for row in original_rows:
+            key = (row.get('ontology'), row.get('ontology_release'), row.get('concept_id'))
+            deduped[key] = row
+        original_rows = list(deduped.values())
+        exact = {'concepts': original_rows, 'matches_truncated': truncated}
     typed_rows = label_exact_candidates(term, original_rows, hpo_phenotype_ids(cur, original_rows),
                                          fetch_typed_metadata(cur, original_rows))
     result = decide_exact(term, typed_rows, requested_type=expected_type,
@@ -200,9 +225,9 @@ def normalize_concept(cur, term: str, *, expected_type: str = 'auto',
     if not include_semantic:
         base['semantic_status'] = 'disabled'
         return base
-    if expected_type in ('laboratory_measurement', 'medication') or ontology in ('LOINC','RXNORM'):
+    if expected_type in ('laboratory_measurement', 'medication') or ontology in ('LOINC','RXNORM','SNOMEDCT_US'):
         base['semantic_status'] = 'no_semantic_index_for_source'
-        base['review_reason'] = 'Exact terminology only; vector indices for LOINC/RxNorm not built'
+        base['review_reason'] = 'Exact terminology only; no semantic vector fallback for this terminology source'
         return base
 
     # SapBERT can suggest a review candidate only. In auto mode prefer MONDO;

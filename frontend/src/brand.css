@@ -26,6 +26,11 @@
 }
 .topbar-nav button:hover, .topbar-nav button.selected,
 .record-tab-header button:hover, .record-tab-header button.active { background: transparent; color: #244ab9; }
+.record-tab-header.record-enhancement-tabs .record-tab-machine,
+.record-tab-header.record-enhancement-tabs .record-tab-machine:hover,
+.record-tab-header.record-enhancement-tabs .record-tab-machine.active { background: #e5f1ff; }
+.record-tab-header.record-enhancement-tabs .record-tab-machine:hover,
+.record-tab-header.record-enhancement-tabs .record-tab-machine.active { background: #dcecff; }
 .topbar-nav button.selected::after, .record-tab-header button.active::after {
   position: absolute;
   inset: auto 10px 0;

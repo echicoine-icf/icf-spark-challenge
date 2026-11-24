@@ -711,3 +711,23 @@ Extended the existing typed API with `measurement_candidate_ranking=source_evide
 - The provider picker is hydrated from the API. Selected exact vocabularies authorize only unique, role-compatible aliases. SapBERT and local NCIt are review sources. NCIt is unavailable in submission mode without redistribution clearance. Reviewed annotations require an approved current fingerprint.
 - The engine keeps the original retrieval and judge intent, validates source-backed expansions, and records proposal, rejection, search and judged relevance counts. Result feedback makes at most one synthesis call per pass. Original-only batch evaluation remains available.
 - Regression checks cover exact labels and synonyms, SapBERT fallback, availability, source gating, measurement terms, and preservation of original query constraints. See the [provider runbook](TASK2_QUERY_KNOWLEDGE.md) for remaining limitations.
+
+
+## SNOMED CT US query enhancement + variable-normalization preview (2026-11-23)
+
+- Added a version-pinned local SNOMED CT US Edition RF2 terminology adapter using active Concept/Description/en-US Language Snapshot files. No licensed SNOMED content is committed.
+- Added `SNOMEDCT_US` to exact terminology resolution and query-provider capability. Disease/phenotype query enhancement prefers a precise SNOMED exact label/synonym match before legacy MONDO/HPO fallback.
+- Reframed Enhanced View as the small-scale Task 1 normalization workbench before any long-running normalized-corpus build. Variable processing there now uses only **SNOMED CT US, LOINC, and RxNorm** as terminology evidence. MONDO and SapBERT were removed from that path.
+- Unique exact mappings from original source text may resolve deterministically. Matches reached through MedGemma-derived lookup terms stay review candidates; ambiguous candidates fail closed. MedGemma remains an interpreter/adjudicator, not an ontology source.
+- Fixed an existing candidate-review wiring bug: terminology candidates were stored on the processed row while the MedGemma reviewer looked inside the nested normalization object, so the reviewer could silently receive an empty candidate list.
+- Added migration `021_snomed_ct_us.sql`, query/provider wiring, Enhanced View provenance/UI updates, synthetic RF2 unit tests, and no-content SNOMED documentation.
+- Focused backend tests pass for terminology parsing/import/normalization and the new Task 1/query-provider paths. The uploaded snapshot still contains older concierge tests that target a removed `_chat_model` symbol; those pre-existing stale tests are not counted as SNOMED regressions.
+- Next workstation gate: download the licensed SNOMED CT US release from NLM UTS, import/activate it, record release/hash/counts, run exact query probes and several Enhanced View variables, then compare precision before considering full-corpus normalization.
+
+## 2026-11-23 — UMLS API interactive fallback
+- Added a bounded NLM UMLS Metathesaurus REST adapter pinned by `UMLS_API_VERSION` (default `2026AB`). No bulk UMLS download/import is required.
+- Query Enrichment now exposes `UMLS Metathesaurus API` under Reference terminology. It is available when `UMLS_API_KEY` is configured but is **not selected by default**. UMLS results remain review-only context and do not become validated aliases.
+- Enhanced View variable normalization keeps SNOMED CT US / LOINC / RxNorm as the preferred local stack. UMLS is called only after that stack produces no mapping and no candidate. UMLS CUIs are review-only and must pass MedGemma adjudication.
+- API credentials are passed to the API container through Compose; keys are never emitted in provider metadata or prompts.
+- Enhanced View cache bumped to v5 and UI now identifies UMLS fallback candidates/provenance.
+- Focused regression set: 56 tests passed using a local psycopg import stub in the artifact environment (the runtime project uses the real psycopg dependency).

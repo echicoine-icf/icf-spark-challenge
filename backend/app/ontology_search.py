@@ -37,6 +37,7 @@ _IDENTIFIER_RE = {
     'RXNORM': re.compile(r'^(?:RXNORM:)?(\d{1,10})$', re.I),
     'MONDO': re.compile(r'^(MONDO:\d+)$', re.I),
     'HP': re.compile(r'^(HP:\d+)$', re.I),
+    'SNOMEDCT_US': re.compile(r'^(?:(?:SNOMEDCT_US|SNOMED|SCTID):)?(\d{6,18})$', re.I),
 }
 
 
@@ -55,7 +56,11 @@ def concept_identifier(term: str, ontology: str | None = None) -> tuple[str, str
             continue
         if namespace == 'RXNORM' and not text.upper().startswith('RXNORM:') and ontology != 'RXNORM':
             continue
-        return namespace, namespace + ':' + match.group(1) if namespace in ('LOINC', 'RXNORM') else match.group(1).upper()
+        if namespace == 'SNOMEDCT_US' and ':' not in text and ontology != 'SNOMEDCT_US':
+            continue
+        if namespace in ('LOINC', 'RXNORM', 'SNOMEDCT_US'):
+            return namespace, namespace + ':' + match.group(1)
+        return namespace, match.group(1).upper()
     return None
 
 

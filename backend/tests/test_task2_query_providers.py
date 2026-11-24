@@ -178,3 +178,51 @@ def test_chat_stream_sends_progress_before_search_finishes(monkeypatch):
             assert [event async for event in events] == []
 
     asyncio.run(read_events())
+
+
+def test_snomed_exact_is_preferred_for_disease_query_enrichment(monkeypatch):
+    calls = []
+
+    def resolve(cur, term, *, ontology, expected_type, **kwargs):
+        calls.append((ontology, expected_type))
+        if ontology == 'SNOMEDCT_US':
+            return _exact('SNOMEDCT_US', 'SNOMEDCT_US:100001', 'hypertension',
+                          'canonical_label', aliases=('high blood pressure',))
+        pytest.fail('MONDO should not be queried after a precise SNOMED exact match')
+
+    monkeypatch.setattr(query_providers, 'normalize_concept', resolve)
+    lookups, _ = query_providers.collect_provider_knowledge(
+        object(), ['hypertension'], ['disease'],
+        [_provider('snomed'), _provider('mondo')],
+    )
+    assert calls == [('SNOMEDCT_US', 'disease')]
+    assert lookups[0]['status'] == 'normalized_exact'
+    assert lookups[0]['knowledge'][0]['source_provider'] == 'snomed'
+    assert [item['term'] for item in lookups[0]['aliases']] == ['high blood pressure']
+
+
+def test_umls_query_provider_is_available_but_off_by_default(monkeypatch):
+    monkeypatch.setattr(query_providers, 'umls_configured', lambda: True)
+    monkeypatch.setattr(query_providers, 'umls_api_version', lambda: '2026AB')
+    [provider] = query_providers.provider_catalog(None, {'umls'})
+    assert provider['id'] == 'umls'
+    assert provider['available'] is True
+    assert provider['default_selected'] is False
+    assert provider['category'] == 'reference'
+
+
+def test_umls_query_provider_returns_review_only_cui_candidates(monkeypatch):
+    monkeypatch.setattr(query_providers, 'umls_search', lambda term, **kwargs: [{
+        'ontology': 'UMLS', 'ontology_release': '2026AB', 'concept_id': 'UMLS:C0020538',
+        'label': 'Hypertensive disease', 'semantic_types': ['Disease or Syndrome'],
+        'root_source': 'MTH', 'match_basis': 'umls_normalizedWords',
+    }])
+    lookups, _ = query_providers.collect_provider_knowledge(
+        object(), ['hypertension'], ['disease'], [_provider('umls', version='2026AB')],
+    )
+    candidate = lookups[0]['knowledge'][0]
+    assert candidate['source_provider'] == 'umls'
+    assert candidate['source_type'] == 'umls_cui_candidate'
+    assert candidate['concept_id'] == 'UMLS:C0020538'
+    assert candidate['validated'] is False
+    assert candidate['selected'] is False

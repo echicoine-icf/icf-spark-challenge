@@ -26,6 +26,8 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-spark}:${POSTGRES_PASSWORD:-spark_local_dev_only}@db:5432/${POSTGRES_DB:-spark}
+      UMLS_API_KEY: ${UMLS_API_KEY:-}
+      UMLS_API_VERSION: ${UMLS_API_VERSION:-2026AB}
     ports:
       - "127.0.0.1:${API_PORT:-18080}:8000"
     volumes:
@@ -149,7 +151,7 @@ services:
       db:
         condition: service_healthy
 
-  # Milestone 5E: offline LOINC / prescribable RxNorm import; user supplies
+  # Offline LOINC / prescribable RxNorm / SNOMED CT US import; user supplies
   # licensed upstream release ZIPs in ./knowledge (never embedded in Git).
   terminology-import:
     build:

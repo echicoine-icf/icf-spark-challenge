@@ -9,6 +9,7 @@ Read-only audit of the running SPARK PostgreSQL database, November 22, 2026. Cou
 | MONDO | `releases/2026-11-03` | 32,137 concepts, 32,137 labels, 60,098 exact synonyms | Typed disease lookup and aliases from an unambiguous match |
 | LOINC | `2.83` | 62,138 concepts, 62,138 labels, 62,093 exact synonym rows | Exact laboratory terminology and typed component/specimen metadata |
 | RxNorm | `2026-11-02` | 81,538 concepts, 81,538 labels, 38,173 exact synonym rows | Exact active prescribable medication names and aliases |
+| SNOMED CT US | not yet audited/imported in this snapshot | no row count claimed until the licensed RF2 release is imported locally | Exact preferred-term/synonym provider for query enhancement; preferred for disease/phenotype exact matches |
 | SapBERT | `090663c3ae57bf35ffe4d0d468a2a88d03051a4d` | 92,235 MONDO term embeddings for the active release. The local service reported CUDA ready. | Review-only semantic candidates |
 | NCIt | `26.10d` | 213,746 concepts and 439,486 synonym rows | Local exact-text reference matches for review. The release is not cleared for submission redistribution. |
 | Preparation caches | Local experiments | 25 lookup cache entries, 35 external lookup records and 65 revisit jobs | Historical experiments only. These records are outside the interactive provider catalog. |
@@ -37,3 +38,13 @@ Use `tests/test_task2_query_refinement.py` and `tests/test_task2_query_providers
 The focused Docker suite passed all 61 tests. Live checks exercised hypertension (MONDO miss, SapBERT and NCIt review candidates), fasting blood glucose (25 additional candidates, 14 cleared relevance), metformin (RxNorm exact canonical match), and type 2 diabetes with metformin exposure (both required characteristics retained).
 
 No database migration, external API call, or at-rest corpus enrichment is introduced. NCIt is disabled in `SPARK_SUBMISSION_MODE` unless the persisted release has redistribution approval. Do not package preparation-cache responses as submission resources.
+
+
+## SNOMED CT US provider update — November 23, 2026
+
+The provider layer now understands `snomed` / `SNOMEDCT_US`. It becomes available only when a locally licensed SNOMED CT US RF2 release has been imported and activated. No SNOMED row counts are inferred from code and no SNOMED content is committed to the repository. For disease/phenotype query terms, a precise SNOMED exact match is preferred; legacy MONDO/HPO exact matching remains a fallback when SNOMED has no exact match. SapBERT remains a query-side review source after deterministic providers miss, but it does not authorize an exact mapping.
+
+This query-side policy is intentionally different from Enhanced View variable normalization. Enhanced View tests the Task 1-style target stack only: SNOMED CT US + LOINC + RxNorm, with MONDO and SapBERT excluded from that processing path.
+
+## UMLS API provider (2026-11-23)
+The interactive provider catalog now includes `UMLS Metathesaurus API` as an optional **Reference terminology** source. It starts unchecked even when configured. Search is pinned by `UMLS_API_VERSION` (default `2026AB`), tries exact UMLS search before normalized-word search, and returns bounded CUI candidates with semantic-type provenance. These candidates are unvalidated review context: unlike exact aliases from locally pinned terminology, a UMLS result cannot independently authorize a query expansion.

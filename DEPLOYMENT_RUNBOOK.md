@@ -206,3 +206,24 @@ Study/dataset data is retrieved from the same original dbGaP endpoints; no infer
 ## Task 2 query enrichment providers
 
 See [Task 2 query knowledge providers](TASK2_QUERY_KNOWLEDGE.md) for the live inventory, source versions, provenance and verification. Build `api` and `chat-ui` with the usual `compose.yaml`, `compose.chat.yaml` and `compose.task2.yaml` overrides. The API discovers active terminology and approved annotations in the existing database. SapBERT is available only when the local model is ready and has vectors matching its revision and the active release. Query enrichment has no database migration.
+
+
+## SNOMED CT US local terminology preparation
+
+SNOMED CT release content is licensed and is not stored in this repository. Download the desired **SNOMED CT US Edition RF2 ZIP** through NLM/UMLS Terminology Services, place the untouched ZIP in `knowledge/`, and retain the release/version receipt required by the challenge artifact manifest. Do not commit the ZIP.
+
+Import from the repository root (replace the filename and release with the actual downloaded release):
+
+```bash
+docker compose --profile tools run --rm terminology-import \
+  --file /knowledge/<SNOMED_US_RF2_ZIP>.zip \
+  --ontology SNOMEDCT_US \
+  --release <YYYYMMDD> \
+  --activate \
+  --ack-license
+```
+
+The importer applies the SNOMED terminology migration as needed. Do not reimport dbGaP and do not remove PostgreSQL volumes. After import, rebuild the API and frontend using the project compose overlays, then verify the active release and test exact terms before using Enhanced View. See `SNOMED_CT_INTEGRATION.md`.
+
+### Interactive UMLS API provider (2026-11-23)
+For Query Enrichment and Enhanced View fallback normalization, set `UMLS_API_KEY` in the ignored root `.env`. Optionally set `UMLS_API_VERSION`; the checked-in default is `2026AB`. `compose.yaml` passes both values only to the API service. Rebuild/restart `api` after changing this integration. Query Enrichment leaves UMLS unchecked by default. Enhanced View invokes UMLS only after local SNOMED CT US / LOINC / RxNorm mapping and candidate generation both miss. UMLS response content is review-only external terminology context and is not a replacement for the locally pinned preferred Task 1 terminology releases.

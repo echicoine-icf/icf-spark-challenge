@@ -29,6 +29,7 @@ from app.prompt_registry import registry_status
 from app.query_providers import (
     CHAT_QUERY_PROVIDERS, LEGACY_TERMINOLOGY, ProviderId, collect_provider_knowledge, provider_catalog,
 )
+from app.umls_api import UMLSAPIError, configured as umls_configured, search as umls_search
 from app.task2_baseline import (
     MAX_CANDIDATE_CAP, NEGATIVE_CONTEXT_RE, REQUIREMENT_ROLES, normalize_excluded_terms,
     normalize_requirements, search_broad, search_requirements,
@@ -1488,10 +1489,9 @@ def _task1_candidate_payload(item: dict) -> dict:
     payload = {key: item.get(key) for key in (
         "ontology", "ontology_release", "concept_id", "label", "concept_type",
         "match_basis", "type_provenance", "source_uri", "source_sha256",
-        "score", "requires_review", "type_compatible",
+        "score", "requires_review", "type_compatible", "semantic_types", "root_source",
     )}
-    # SapBERT candidates use their own response names; normalize them only for
-    # display and provenance, never as an equivalence claim.
+    # Keep one display/provenance shape across versioned terminology sources.
     payload["label"] = payload["label"] or item.get("canonical_label")
     payload["score"] = payload["score"] if payload["score"] is not None else item.get("cosine_similarity")
     return payload
@@ -1506,6 +1506,101 @@ def _task1_source_text(row: dict) -> str:
     if not alpha_words and description:
         return description
     return name or description
+
+
+TASK1_PREFERRED_SOURCES = {
+    # Task 1 preview deliberately excludes MONDO and SapBERT. Disease and
+    # phenotype concepts use SNOMED CT US; laboratory measurements use LOINC;
+    # medications use RxNorm. Auto checks all three and fails closed on ties.
+    "disease": (("SNOMEDCT_US", "disease"),),
+    "phenotype": (("SNOMEDCT_US", "phenotype"),),
+    "medication": (("RXNORM", "medication"),),
+    "laboratory_measurement": (("LOINC", "laboratory_measurement"),),
+    "auto": (("SNOMEDCT_US", "auto"), ("LOINC", "laboratory_measurement"), ("RXNORM", "medication")),
+}
+
+
+def _task1_preferred_normalization(cur, term: str, expected_type: str) -> dict:
+    """Exact-only normalization over the Task 1 preferred local vocabularies.
+
+    A source-grounded exact label/synonym may auto-map only when exactly one
+    concept identity survives across the applicable preferred vocabularies.
+    Model-derived lookup terms never auto-map; callers retain them as candidates.
+    """
+    from app.concept_normalization import normalize_concept
+
+    sources = TASK1_PREFERRED_SOURCES.get(expected_type, TASK1_PREFERRED_SOURCES["auto"])
+    exact = []
+    states = []
+    for ontology, requested_type in sources:
+        result = normalize_concept(
+            cur, term, expected_type=requested_type, ontology=ontology,
+            include_semantic=False, max_expansions=0, candidate_limit=3,
+        )
+        states.append((ontology, result))
+        if result.get("normalized_concept"):
+            exact.append(result["normalized_concept"])
+        elif result.get("status") in {"ambiguous_exact", "unclassified_exact", "type_mismatch"}:
+            exact.extend(result.get("exact_matches", []))
+
+    unique = []
+    seen = set()
+    for candidate in exact:
+        key = (candidate.get("ontology"), candidate.get("concept_id"))
+        if key not in seen:
+            seen.add(key)
+            unique.append(candidate)
+
+    base = {
+        "original_term": term,
+        "expected_type": expected_type,
+        "scoped_ontologies": [ontology for ontology, _ in sources],
+        "semantic_suggestions": [],
+        "semantic_status": "disabled_for_task1_preview",
+        "expansions": [],
+        "exact_matches": unique,
+        "review_candidates": [],
+        "normalized_concept": None,
+        "matches_truncated": any(result.get("matches_truncated") for _, result in states),
+    }
+    if len(unique) == 1 and not base["matches_truncated"]:
+        return {**base, "status": "normalized_exact", "normalized_concept": unique[0], "review_reason": None}
+    if unique:
+        return {**base, "status": "ambiguous_exact", "review_candidates": unique,
+                "review_reason": "Multiple exact concepts in preferred Task 1 terminologies; review required."}
+    if states and all(result.get("status") == "terminology_not_loaded" for _, result in states):
+        return {**base, "status": "terminology_not_loaded",
+                "review_reason": "No applicable Task 1 terminology release is loaded."}
+    return {**base, "status": "not_found",
+            "review_reason": "No exact label or synonym in loaded SNOMED CT US, LOINC, or RxNorm sources."}
+
+
+def _task1_umls_fallback_candidates(terms: list[tuple[str, str]], expected_type: str) -> tuple[list[dict], bool]:
+    """Return bounded review-only UMLS CUI candidates after all primary sources miss.
+
+    `terms` is ordered by trust: original source text first, then MedGemma-derived
+    lookup terms. Stop at the first term that returns candidates so an API fallback
+    cannot fan out into a large candidate set.
+    """
+    if not umls_configured():
+        return [], False
+    semantic_group = "Disorders" if expected_type == "disease" else None
+    for query, origin in terms:
+        query = " ".join(query.split())[:180]
+        if len(query) < 2:
+            continue
+        try:
+            hits = umls_search(query, limit=3, semantic_group=semantic_group)
+        except UMLSAPIError:
+            return [], True
+        if not hits:
+            continue
+        return [
+            {**_task1_candidate_payload(hit), "candidate_query": query,
+             "candidate_origin": origin, "requires_review": True}
+            for hit in hits
+        ], False
+    return [], False
 
 
 def _task1_infer_terms(study_id: str, rows: list[dict]) -> dict[str, Task1VariableInterpretation]:
@@ -1558,19 +1653,22 @@ def _task1_add_candidates(target: list[dict], normalization: dict, *, query: str
     if exact:
         target.append({**_task1_candidate_payload(exact), "candidate_query": query,
                        "candidate_origin": origin, "requires_review": origin != "source_exact"})
+    for candidate in normalization.get("review_candidates", []):
+        target.append({**_task1_candidate_payload(candidate), "candidate_query": query,
+                       "candidate_origin": origin, "requires_review": True})
     for candidate in normalization.get("semantic_suggestions", []):
         target.append({**_task1_candidate_payload(candidate), "candidate_query": query,
                        "candidate_origin": origin, "requires_review": True})
 
 
 def _task1_model_review(study_id: str, variables: list[dict]) -> dict[str, Task1ModelReview]:
-    """Ask MedGemma to assess candidates, never to invent or finalize mappings."""
+    """Ask MedGemma to assess terminology candidates, never to invent mappings."""
     reviewable = []
     for row in variables:
         normalization = row["normalization"]
-        candidates = normalization.get("review_candidates", [])
-        # Exact mappings are already decided by deterministic terminology
-        # evidence. MedGemma only sees non-exact semantic candidates.
+        candidates = row.get("review_candidates", [])
+        # Source-text exact mappings are already deterministic. MedGemma sees
+        # only ambiguous or model-derived exact terminology candidates.
         if candidates and not normalization.get("normalized_concept"):
             reviewable.append({
                 "variable_id": row["variable_id"],
@@ -1580,7 +1678,7 @@ def _task1_model_review(study_id: str, variables: list[dict]) -> dict[str, Task1
                 "unit": row["unit"],
                 "medgemma_interpretation": row.get("interpretation"),
                 "lookup_terms": row.get("lookup_terms", []),
-                "semantic_candidates": candidates,
+                "terminology_candidates": candidates,
             })
     if not reviewable:
         return {}
@@ -1602,7 +1700,7 @@ def _task1_model_review(study_id: str, variables: list[dict]) -> dict[str, Task1
         source = valid.get(review.variable_id)
         if source is None:
             continue
-        candidate_ids = {candidate["concept_id"] for candidate in source["semantic_candidates"]}
+        candidate_ids = {candidate["concept_id"] for candidate in source["terminology_candidates"]}
         reason = review.reason.casefold()
         rejects_own_selection = bool(re.search(
             r"\b(?:not\s+(?:suitable|appropriate|supported|a\s+match|related)|"
@@ -1624,13 +1722,12 @@ def study_normalization_preview(request: StudyNormalizationRequest):
             raise HTTPException(status_code=404, detail="Study not found.")
         total, source_rows = _task1_variable_rows(request.study_id, request.offset, request.limit)
         interpretations = _task1_infer_terms(request.study_id, source_rows)
-        from app.concept_normalization import normalize_concept
         processed = []
         with _db_connection() as conn, conn.cursor() as cur:
             for source in source_rows:
                 # The displayed field is the same source text supplied to the
-                # deterministic matcher and SapBERT. Descriptions provide useful
-                # context but do not replace the dbGaP variable label.
+                # deterministic matcher. Descriptions provide useful context but
+                # do not replace the dbGaP variable label.
                 term = _task1_source_text(source)
                 inference = interpretations.get(source["variable_id"])
                 if len(term) < 2:
@@ -1640,25 +1737,14 @@ def study_normalization_preview(request: StudyNormalizationRequest):
                     }
                 else:
                     inferred_type = inference.expected_type if inference else "auto"
-                    normalization = normalize_concept(
-                        # Exact labels/synonyms are always safe to check.  A generic
-                        # field such as ANALYTE_TYPE, however, must not be projected
-                        # into the nearest disease merely because a semantic index is
-                        # available.  Permit SapBERT-style candidate generation only
-                        # after MedGemma can identify a supported biomedical type.
-                        cur, term[:120], expected_type=inferred_type,
-                        include_semantic=inferred_type != "auto",
-                        max_expansions=0, candidate_limit=3,
-                    )
+                    normalization = _task1_preferred_normalization(cur, term[:120], inferred_type)
                 candidates = []
                 _task1_add_candidates(candidates, normalization, query=term, origin="source_text")
                 for lookup_term in (inference.lookup_terms if inference else []):
                     if lookup_term.casefold() == term.casefold():
                         continue
-                    derived = normalize_concept(
-                        cur, lookup_term, expected_type=inference.expected_type,
-                        include_semantic=inference.expected_type != "auto",
-                        max_expansions=0, candidate_limit=3,
+                    derived = _task1_preferred_normalization(
+                        cur, lookup_term, inference.expected_type,
                     )
                     _task1_add_candidates(candidates, derived, query=lookup_term,
                                           origin="medgemma_interpretation")
@@ -1671,8 +1757,32 @@ def study_normalization_preview(request: StudyNormalizationRequest):
                     if key not in seen:
                         seen.add(key)
                         unique_candidates.append(candidate)
+
+                # UMLS is a fallback only. It is never queried while a preferred
+                # SNOMED CT US / LOINC / RxNorm mapping or candidate exists. A
+                # UMLS hit is review-only even when the API reports an exact CUI.
+                umls_unavailable = False
+                umls_fallback_used = False
+                if not normalization.get("normalized_concept") and not unique_candidates:
+                    fallback_terms = [(term, "umls_fallback_source")]
+                    if inference:
+                        fallback_terms.extend((lookup, "umls_fallback_medgemma") for lookup in inference.lookup_terms
+                                              if lookup.casefold() != term.casefold())
+                    umls_candidates, umls_unavailable = _task1_umls_fallback_candidates(
+                        fallback_terms, inference.expected_type if inference else "auto",
+                    )
+                    if umls_candidates:
+                        umls_fallback_used = True
+                        for candidate in umls_candidates:
+                            key = (candidate.get("ontology"), candidate.get("concept_id"))
+                            if key not in seen:
+                                seen.add(key)
+                                unique_candidates.append(candidate)
+
                 processed.append({**source, "normalization": normalization,
                                   "review_candidates": unique_candidates,
+                                  "umls_fallback_used": umls_fallback_used,
+                                  "umls_unavailable": umls_unavailable,
                                   "interpretation": inference.interpretation if inference else None,
                                   "normalized_label": inference.normalized_label if inference else None,
                                   "lookup_terms": inference.lookup_terms if inference else []})
@@ -1683,12 +1793,14 @@ def study_normalization_preview(request: StudyNormalizationRequest):
         raise HTTPException(status_code=503, detail=f"Task 1 preview unavailable: {type(exc).__name__}") from exc
 
     rows = []
-    exact_count = review_candidate_count = unresolved_count = 0
+    exact_count = review_candidate_count = unresolved_count = umls_fallback_count = 0
     for source in processed:
         normalization = source.pop("normalization")
         exact = normalization.get("normalized_concept")
         candidates = source.pop("review_candidates")
         review = reviews.get(source["variable_id"])
+        if source.get("umls_fallback_used"):
+            umls_fallback_count += 1
         if exact:
             status = "normalized_exact"
             exact_count += 1
@@ -1706,7 +1818,9 @@ def study_normalization_preview(request: StudyNormalizationRequest):
             "source_text": _task1_source_text(source),
             "status": status,
             "mapping": selected,
-            "semantic_candidates": candidates,
+            "terminology_candidates": candidates,
+            "umls_fallback_used": bool(source.pop("umls_fallback_used", False)),
+            "umls_unavailable": bool(source.pop("umls_unavailable", False)),
             "medgemma_interpretation": source.pop("interpretation"),
             "lookup_terms": source.pop("lookup_terms"),
             "normalization_status": normalization.get("status"),
@@ -1725,9 +1839,10 @@ def study_normalization_preview(request: StudyNormalizationRequest):
             "review_candidates": review_candidate_count,
             "unresolved": unresolved_count,
             "medgemma_reviewed": len(reviews),
-            "policy": "Exact ontology matches are deterministic. SapBERT and MedGemma selections remain candidates for review.",
+            "umls_fallback_variables": umls_fallback_count,
+            "policy": "Exact source-text matches in SNOMED CT US, LOINC, or RxNorm are deterministic when unique. If all preferred sources miss, UMLS API CUI results may be offered as review-only fallback candidates. Matches reached through MedGemma-derived lookup terms also remain candidates for review.",
         },
-        "source": "original_dbgap_variable_dictionary_plus_pinned_terminology",
+        "source": "original_dbgap_variable_dictionary_plus_task1_preferred_terminology_with_umls_fallback",
     }
 
 

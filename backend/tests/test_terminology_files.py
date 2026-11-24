@@ -164,3 +164,67 @@ def test_does_not_fallback_to_panels_forms_file(tmp_path):
                    'LOINC_NUM,LONG_COMMON_NAME\n9999-9,Accessory copy\n')
     with pytest.raises(ValueError, match='found 0 primary matches'):
         list(read_records(archive, 'LOINC'))
+
+
+def make_snomed_us(tmp_path):
+    """Synthetic RF2 Snapshot fixture; contains no licensed SNOMED content."""
+    path = tmp_path/'SnomedCT_USEditionRF2_PRODUCTION_20260901T120000Z.zip'
+    concept = (
+        'id\teffectiveTime\tactive\tmoduleId\tdefinitionStatusId\n'
+        '100001\t20260901\t1\t900000000000207008\t900000000000074008\n'
+        '100002\t20260901\t0\t900000000000207008\t900000000000074008\n'
+    )
+    description = (
+        'id\teffectiveTime\tactive\tmoduleId\tconceptId\tlanguageCode\ttypeId\tterm\tcaseSignificanceId\n'
+        '200001\t20260901\t1\t900000000000207008\t100001\ten\t900000000000003001\tSynthetic hypertension (disorder)\t900000000000448009\n'
+        '200002\t20260901\t1\t900000000000207008\t100001\ten\t900000000000013009\tSynthetic hypertension\t900000000000448009\n'
+        '200003\t20260901\t1\t900000000000207008\t100001\ten\t900000000000013009\tSynthetic high blood pressure\t900000000000448009\n'
+        '200004\t20260901\t1\t900000000000207008\t100002\ten\t900000000000003001\tInactive synthetic finding (finding)\t900000000000448009\n'
+    )
+    language = (
+        'id\teffectiveTime\tactive\tmoduleId\trefsetId\treferencedComponentId\tacceptabilityId\n'
+        '300001\t20260901\t1\t900000000000207008\t900000000000509007\t200002\t900000000000548007\n'
+        '300002\t20260901\t1\t900000000000207008\t900000000000509007\t200003\t900000000000549004\n'
+    )
+    with ZipFile(path,'w') as z:
+        z.writestr('Snapshot/Terminology/sct2_Concept_Snapshot_US1000124_20260901.txt', concept)
+        z.writestr('Snapshot/Terminology/sct2_Description_Snapshot-en_US1000124_20260901.txt', description)
+        z.writestr('Snapshot/Refset/Language/der2_cRefset_LanguageSnapshot-en_US1000124_20260901.txt', language)
+    return path
+
+
+def test_snomed_us_reads_active_preferred_and_same_concept_synonyms(tmp_path):
+    from app.terminology_files import iter_snomed_us
+    records = list(iter_snomed_us(make_snomed_us(tmp_path)))
+    assert len(records) == 1
+    row = records[0]
+    assert row.concept_id == 'SNOMEDCT_US:100001'
+    assert row.label == 'Synthetic hypertension'
+    assert row.concept_type == 'disease'
+    assert row.subtype == 'disorder'
+    assert row.aliases == ('Synthetic high blood pressure',)
+    assert row.attributes['fsn'] == 'Synthetic hypertension (disorder)'
+    assert row.attributes['edition'] == 'US'
+
+
+def test_snomed_us_release_validation(tmp_path):
+    file = make_snomed_us(tmp_path)
+    validate_release_filename(file, 'SNOMEDCT_US', '20260901')
+    with pytest.raises(ValueError, match='filename/release mismatch'):
+        validate_release_filename(file, 'SNOMEDCT_US', '20260301')
+
+
+def test_snomed_typed_exact_candidate():
+    row={'ontology':'SNOMEDCT_US','ontology_release':'20260901','concept_id':'SNOMEDCT_US:100001',
+         'label':'Synthetic hypertension','exact_synonyms':['Synthetic high blood pressure'],
+         'source_sha256':'f'*64,'source_uri':'https://www.nlm.nih.gov/healthit/snomedct/us_edition.html'}
+    meta={('SNOMEDCT_US','20260901','SNOMEDCT_US:100001'):{
+        'concept_type':'disease','subtype':'disorder','source_status':'ACTIVE',
+        'attributes':{'semantic_tag':'disorder'}}}
+    typed=label_exact_candidates('Synthetic high blood pressure',[row],set(),meta)
+    assert type_concept(row,set(),meta) == 'disease'
+    assert typed[0]['type_provenance'] == 'SNOMED_CT_US_active_FSN_semantic_tag'
+    output=decide_exact('Synthetic high blood pressure',typed,requested_type='disease',
+                        max_expansions=3,matches_truncated=False)
+    assert output['status'] == 'normalized_exact'
+    assert output['normalized_concept']['concept_id'] == 'SNOMEDCT_US:100001'
