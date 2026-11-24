@@ -122,14 +122,14 @@ export default function ResourceInspector({ studyId, studyDescription, selectedD
     <div className="explore-heading"><h4>Machine-readable resources</h4></div>
     <div className="source-link-list">
       {allowedURIs.map(link => <div className="source-link-row" key={link}>
-        <div className="source-link-info"><a href={link} target="_blank" rel="noopener noreferrer" title={link}>{displayName(link)} ↗</a><small>{cachedLinks[link] ? 'Retrieved · saved in browser' : 'Eligible API reference · not yet retrieved'}</small></div>
+        <div className="source-link-info"><a href={link} target="_blank" rel="noopener noreferrer" title={link}>{displayName(link)} ↗</a><small>{cachedLinks[link] ? 'Retrieved | saved in browser' : 'Eligible API reference | not yet retrieved'}</small></div>
         <button type="button" disabled={loading} onClick={() => void inspect(link)}>{cachedLinks[link] ? 'View retrieved data' : 'Retrieve data'}</button>
       </div>)}
     </div>
     {loading && <div className="resource-loading" role="status"><span className="spinner" /> Retrieving selected resource…</div>}
     {failure && <div className="resource-error" role="alert">{failure}</div>}
     {snapshot && allowedURIs.includes(snapshot.uri) && <div className="resource-data-viewer">
-      <div className="resource-data-header"><div><strong>{displayName(snapshot.uri)}</strong><small>{snapshot.content_type} · {cacheHit ? 'Restored from browser cache' : 'Retrieved and cached'} · {new Date(snapshot.retrieved_at).toLocaleString()}</small></div><div className="resource-tools"><button type="button" onClick={() => setView('tree')} className={view === 'tree' ? 'on' : ''}>Structure</button><button type="button" onClick={() => setView('raw')} className={view === 'raw' ? 'on' : ''}>Raw</button><button type="button" onClick={() => void copy()}>Copy</button><button type="button" onClick={() => void inspect(snapshot.uri, true)} disabled={loading} title="Retrieve from source again">↻</button></div></div>
+      <div className="resource-data-header"><div><strong>{displayName(snapshot.uri)}</strong><small>{snapshot.content_type} | {cacheHit ? 'Restored from browser cache' : 'Retrieved and cached'} | {new Date(snapshot.retrieved_at).toLocaleString()}</small></div><div className="resource-tools"><button type="button" onClick={() => setView('tree')} className={view === 'tree' ? 'on' : ''}>Structure</button><button type="button" onClick={() => setView('raw')} className={view === 'raw' ? 'on' : ''}>Raw</button><button type="button" onClick={() => void copy()}>Copy</button><button type="button" onClick={() => void inspect(snapshot.uri, true)} disabled={loading} title="Retrieve from source again">↻</button></div></div>
       <div className="resource-data-body">{view === 'raw' || typeof snapshot.content === 'string' ? <pre>{typeof snapshot.content === 'string' ? snapshot.content : JSON.stringify(snapshot.content, null, 2)}</pre> : <TreeValue value={snapshot.content} />}</div>
       <p className="resource-provenance">Source: {snapshot.source}. Linked content is not a verified clinical mapping.</p>
     </div>}

@@ -41,18 +41,18 @@ export default function SearchInsights<T extends Result>({ results, enrichedStud
   if (provenanceAvailable && showCore && !showEnriched) filterSummary = 'Showing only original query results';
   if (provenanceAvailable && !showCore && showEnriched) filterSummary = 'Showing only results added by query enrichment';
   if (provenanceAvailable && !showCore && !showEnriched) filterSummary = 'No result origins selected';
-  if (activeSource) filterSummary += ` · ${activeSource.replaceAll('_', ' ')} source · ${matchCount} ${matchCount === 1 ? 'result' : 'results'}`;
-  if (filter) filterSummary += ` · ${matchCount} ${matchCount === 1 ? 'result' : 'results'} matching text`;
+  if (activeSource) filterSummary += ` | ${activeSource.replaceAll('_', ' ')} source | ${matchCount} ${matchCount === 1 ? 'result' : 'results'}`;
+  if (filter) filterSummary += ` | ${matchCount} ${matchCount === 1 ? 'result' : 'results'} matching text`;
   return <div className="results-explorer">
     <div className="rank-band-picker" role="group" aria-label="Study rank groups">
       {[...bands].map(([band, group]) => <button type="button" key={band} disabled={!group.matches.length}
         aria-pressed={band === activeBand} onClick={() => setSelectedBand(band)}>
         <strong>{band === 0 ? 'Top matches' : group.first === group.last ? `Rank #${group.first}` : `Ranks #${group.first}–${group.last}`}</strong>
-        <span>{band === 0 && group.first !== group.last ? `#${group.first}–${group.last} · ` : ''}{group.matches.length} {group.matches.length === 1 ? 'study' : 'studies'}</span>
+        <span>{band === 0 && group.first !== group.last ? `#${group.first}–${group.last} | ` : ''}{group.matches.length} {group.matches.length === 1 ? 'study' : 'studies'}</span>
       </button>)}
     </div>
     <details className="rank-result-filters">
-      <summary>Filter studies · {filterSummary}</summary>
+      <summary>Filter studies | {filterSummary}</summary>
       {provenanceAvailable && <fieldset className="rank-origin-filters"><legend>Result origin</legend>
         <label><input type="checkbox" checked={showCore} onChange={event => setShowCore(event.target.checked)} /> Original query results <span>({results.filter(result => !enrichedIds.has(result.study_id)).length})</span></label>
         <label><input type="checkbox" checked={showEnriched} onChange={event => setShowEnriched(event.target.checked)} /> Added by query enrichment <span>({results.filter(result => enrichedIds.has(result.study_id)).length})</span></label>
@@ -60,7 +60,7 @@ export default function SearchInsights<T extends Result>({ results, enrichedStud
       {!provenanceAvailable && <p className="rank-origin-unavailable">Result origin is unavailable for this saved search.</p>}
       <div className="insight-filter-line"><label><span>Find in all ranks</span><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Study, accession, description…" /></label>{(query || activeSource || !showCore || !showEnriched) && <button type="button" className="clear-filters" onClick={() => { setQuery(''); setActiveSource(''); setShowCore(true); setShowEnriched(true); }}>Clear filters ×</button>}</div>
       {sources.length > 0 && <details className="rank-source-filters">
-        <summary>Evidence sources{activeSource && ` · ${activeSource.replaceAll('_', ' ')}`}</summary>
+        <summary>Evidence sources{activeSource && ` | ${activeSource.replaceAll('_', ' ')}`}</summary>
         <div className="source-insight-chart"><div className="insight-header"><small>Number of returned studies with each source label</small></div><div className="insight-bars">{sources.slice(0, 7).map(([source, count]) => <button type="button" key={source} className={`insight-bar-row ${activeSource === source ? 'active' : ''}`} onClick={() => setActiveSource(current => current === source ? '' : source)} aria-pressed={activeSource === source}><span>{source.replaceAll('_', ' ')}</span><span className="insight-bar-track"><span className="insight-bar-fill" style={{ width: `${100 * count / results.length}%` }} /></span><b>{count}</b></button>)}</div></div>
       </details>}
     </details>

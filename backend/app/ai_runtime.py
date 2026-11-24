@@ -62,6 +62,9 @@ def _chat_model(messages: list[dict], *, schema: dict | None, max_tokens: int, t
             "temperature": temperature,
             "num_predict": max_tokens,
             "seed": seed,
+            # Reserve space for the complete supplied evidence, rather than
+            # allowing Ollama's default context to silently discard its beginning.
+            "num_ctx": max(8192, sum(len(str(m.get('content', ''))) for m in messages) + max_tokens + 1024),
         },
     }
     if schema is not None:

@@ -731,3 +731,67 @@ Extended the existing typed API with `measurement_candidate_ranking=source_evide
 - API credentials are passed to the API container through Compose; keys are never emitted in provider metadata or prompts.
 - Enhanced View cache bumped to v5 and UI now identifies UMLS fallback candidates/provenance.
 - Focused regression set: 56 tests passed using a local psycopg import stub in the artifact environment (the runtime project uses the real psycopg dependency).
+
+## 2026-11-23 — Search configuration UI and relevance-tier contract
+
+- Cleaned the composer search-configuration panel so Relevancy Parameters and Query Enrichment occupy the same full-width tabbed area.
+- Query Enrichment providers now render as a stable 2-column grid without the previous clipped internal scrollbar; responsive layout collapses to one column.
+- Relevancy Parameters now explains that the selected analysis tier controls the original dbGaP evidence supplied to MedGemma before relevance grading.
+- Verified and made explicit the tier contract used by relevance ranking:
+  - Tier 1: retrieval packet (title, shortened description, retrieval excerpts).
+  - Tier 2: complete study title and description.
+  - Tier 3: full original study metadata / indexed terminology.
+  - Tier 4: Tier 3 plus all phenotype/genotype dataset titles and descriptions.
+  - Tier 5: Tier 4 plus batched review of every phenotype variable record.
+- The selected `relevance_tier` is carried from chat request through `_apply_relevance_judge`, persisted on ranked rows, exposed in `relevance_judging.analysis_tier`, and reused by the ranking-explanation endpoint.
+- Removed an unreachable legacy evidence-loading block from the relevance judge and documented `_analysis_candidates` as the single tier-aware evidence loader.
+- Added regression tests for progressive tier evidence, request-to-judge tier propagation, and ranking-explanation tier reuse.
+
+## Adaptive relevance analysis (2026-11-23)
+- Replaced the chat-facing fixed relevance-tier selector with an automatic per-study evidence cascade.
+- Query Enrichment remains the only composer configuration surface and is open by default but collapsible.
+- Adaptive evidence path: retrieval evidence -> complete study description -> full study metadata -> dataset descriptions -> phenotype-variable review.
+- Broad/simple queries may resolve early when the grade is stable and confidence clears the stop threshold; constrained queries with multiple requirements or exclusions must reach full study metadata before stopping.
+- Grade 1 (near-cutoff) studies always escalate when a deeper evidence layer exists. A grade change after adding evidence also forces one more layer for stability.
+- MedGemma relevance judging is batched progressively (8/4/2/1/1 candidates by depth) to keep the inexpensive passes fast while reserving dataset/variable analysis for hard cases.
+- Each ranked study now records its `analysis_path`, final `relevance_tier`, `analysis_scope`, and `analysis_stop_reason` for auditability and ranking explanation reuse.
+- Streaming chat progress emits per-study adaptive routing events so the UI can show why one candidate stopped early while another escalated.
+- Explicit relevance tiers remain accepted by the batch `/api/v1/task2/rank` path for reproducible fixed-depth comparisons; normal chat defaults to adaptive analysis.
+
+## Composer relevance cutoff (2026-11-23)
+- Added a compact Relevance cutoff selector directly inside the research-question composer: Grade 1+ (Lenient), Grade 2+ (Balanced/default), or Grade 3 (Strict).
+- The grade rubric itself remains fixed: 0 Irrelevant, 1 Marginal, 2 Relevant, 3 Strong Match. The selector changes the minimum passing grade rather than asking MedGemma to redefine relevance.
+- Normal chat sends `relevance_cutoff_grade` with each request. The selected cutoff drives final result filtering, query-refinement relevant counts, response metadata, and adaptive per-study routing.
+- Adaptive routing now spends extra evidence around the selected decision boundary. A study exactly on the cutoff gets at least a description-level confirmation; a nonzero grade just below the cutoff is checked through full study metadata before a stable high-confidence rejection can stop the cascade.
+- Grade 3 strict mode suppresses below-cutoff direct-title fallback so the strict result list contains only Strong Match studies. Grade 1 lenient mode may retain Marginal studies; Grade 0 remains excluded.
+- The live per-study routing reason explicitly references the selected cutoff when that threshold caused an escalation or stop decision.
+
+## 2026-11-23 — Relevance cutoff, Query Enrichment master switch, and UMLS fallback filtering
+
+- Added a compact relevance cutoff selector to the research-question composer. The fixed relevance rubric remains unchanged (`3=strong`, `2=relevant`, `1=marginal`, `0=irrelevant`); the selected cutoff controls which grades pass and how the adaptive relevance cascade treats near-cutoff studies. Defaults to Grade 2+ (Balanced), with Grade 1+ (Lenient) and Grade 3 (Strict) available.
+- The cutoff is sent with chat and batch-ranking requests, recorded in relevance metadata, and used by the adaptive routing policy when deciding whether a borderline study needs a deeper evidence layer.
+- Added a Query Enrichment master checkbox. Disabling it sends no enrichment providers and no result-feedback passes while preserving the user's provider selections for later re-enabling. Added explanatory subtext describing source-supported terminology/result-derived expansion while preserving original intent.
+- Fixed Variable Normalization filtering for UMLS fallback. `umls_fallback_variables` counts variables for which UMLS returned fallback candidates, regardless of whether MedGemma selected one for review. The UMLS filter now reveals any such row, including rows whose final decision remains unresolved; status filters and the UMLS-source filter use OR semantics.
+- Renamed the summary wording from `UMLS fallback candidates` to `variables with UMLS fallback` to reflect what the count actually represents.
+
+## Adaptive relevance latency hardening (2026-11-24)
+
+- Reworked analysis effort into a hard evidence budget instead of allowing low-effort modes to drift into deep scans:
+  - 1 Fastest = retrieval evidence only.
+  - 2 Balanced (default) = complete study description, no dataset/variable scan.
+  - 3 Thorough = full original study metadata and indexed terminology.
+  - 4 Deep = may inspect phenotype/genotype dataset descriptions.
+  - 5 Exhaustive = may perform the full phenotype-variable review.
+- Constrained queries now start directly at the minimum evidence tier required by the selected effort budget. The system no longer spends MedGemma calls on cheaper tiers that are not permitted to resolve the study.
+- Increased compact relevance-judge batch sizes for tiers 1-4 to reduce model round trips.
+- Replaced per-study corpus reads for study/dataset evidence with batched `ANY(study_ids)` queries. Exhaustive variable records are also loaded in one DB query before the existing variable-review batches.
+- Kept Grade 0-3 relevance semantics and Grade 1/2/3 cutoff semantics separate from the 1-5 analysis-effort budget.
+- Composer cleanup: Query Enrichment remains enabled but collapsed by default; provider cards remain four equal-height columns; textarea native resize/scroll chrome is suppressed and the single-line prompt is vertically centered.
+
+## 2026-11-23 — Search timing, relevance effort slider, and live analysis provenance
+
+- Search responses now record separate elapsed times for corpus/query-enrichment retrieval, MedGemma relevance analysis, and final result sorting; the assistant search summary reports all three timings.
+- Relevance Analysis keeps the Grade 1–3 cutoff rubric unchanged and now exposes the 1–5 analysis-effort budget as a slider. The selected effort name and description update above the slider as it moves.
+- Live adaptive study cards expose the current relevance grade and evidence tier together (for example, `Grade 3 / Tier 2`) while retaining the evidence-route history and stop/escalation reason.
+- Query Enrichment provider columns retain the flat four-column layout with transparent sections and top-aligned controls.
+- User-facing middle-dot separators were removed from the React UI and live concierge progress strings in favor of ordinary metadata separators/phrasing.

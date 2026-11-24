@@ -143,8 +143,9 @@ def test_enriched_chat_reranks_original_multi_constraint_intent(monkeypatch):
 
     monkeypatch.setattr(concierge, "_refine_query", refine)
 
-    def rank(text, original_plan, data, *, progress):
+    def rank(text, original_plan, data, *, progress, relevance_tier):
         assert text == message and original_plan is plan
+        assert relevance_tier == 3
         return {**data, "relevance_judging": {"applied": True}}
 
     monkeypatch.setattr(concierge, "_apply_relevance_judge", rank)

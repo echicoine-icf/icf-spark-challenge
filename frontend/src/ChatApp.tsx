@@ -13,6 +13,7 @@ import './motion.css';
 import './ranking.css';
 
 type EvidenceExcerpt = { source_type: string; excerpt: string };
+type AnalysisStep = { tier: number; scope: string; grade?: number; confidence?: number; decision: string; reason: string; next_tier?: number };
 type StudyResult = {
   study_id: string;
   original_title: string;
@@ -26,6 +27,10 @@ type StudyResult = {
   relevance_grade?: number;
   relevance_label?: 'strong_match' | 'relevant' | 'marginal' | 'irrelevant' | 'title_match' | 'unjudged';
   relevance_confidence?: number;
+  relevance_tier?: number;
+  analysis_scope?: string;
+  analysis_stop_reason?: string;
+  analysis_path?: AnalysisStep[];
   relevance_reason?: string;
   research_intent?: string;
 };
@@ -38,6 +43,29 @@ function relevanceLabel(result: StudyResult): string {
     case 'title_match': return 'Title match';
     default: return 'Retrieved';
   }
+}
+function analysisTierName(tier?: number): string | null {
+  switch (tier) {
+    case 1: return 'retrieval evidence';
+    case 2: return 'study description';
+    case 3: return 'full metadata';
+    case 4: return 'dataset descriptions';
+    case 5: return 'phenotype variables';
+    default: return null;
+  }
+}
+function analysisDepth(tier?: number): string | null {
+  const name = analysisTierName(tier);
+  return name && tier ? `Depth ${tier} | ${name}` : null;
+}
+function analysisRouteTiers(tiers: number[]): string | null {
+  const unique = [...new Set(tiers)];
+  return unique.length ? unique.map(tier => analysisTierName(tier) ?? `depth ${tier}`).join(' → ') : null;
+}
+function analysisRoute(result: StudyResult): string | null {
+  const tiers = (result.analysis_path ?? []).map(step => step.tier);
+  if (!tiers.length && result.relevance_tier) tiers.push(result.relevance_tier);
+  return analysisRouteTiers(tiers);
 }
 type Dataset = { dataset_id: string; original_title: string; original_description: string; source_path?: string; variable_count?: number };
 type TerminologyConcept = { ontology: string; ontology_release: string; concept_id: string; label: string };
@@ -59,6 +87,13 @@ const KNOWLEDGE_GROUPS = [
   ['semantic', 'Semantic terminology suggestions'],
   ['reference', 'Reference terminology'],
   ['result_feedback', 'Retrieved study evidence'],
+] as const;
+const ANALYSIS_EFFORT_OPTIONS = [
+  { effort: 1, title: 'Fastest', detail: 'Retrieval evidence only. Lowest latency.' },
+  { effort: 2, title: 'Balanced', detail: 'Uses the complete study description and avoids dataset or variable scans.' },
+  { effort: 3, title: 'Thorough', detail: 'Adds complete study metadata and indexed terminology.' },
+  { effort: 4, title: 'Deep', detail: 'May inspect phenotype and genotype dataset descriptions.' },
+  { effort: 5, title: 'Exhaustive', detail: 'Allows phenotype-variable review when needed. Slowest and most complete.' },
 ] as const;
 type StudyDetails = {
   study: { study_id: string; original_title: string; original_description: string; source_path?: string; mesh_labels?: string | string[] | null; mesh_ids?: string | string[] | null; terminology_fields?: Record<string, string | string[] | null> | null };
@@ -105,7 +140,18 @@ type SearchMeta = {
     marginal_or_irrelevant_count?: number;
     boundary_reached: boolean;
     review_limit_reached?: boolean;
+    analysis_tier?: number;
+    analysis_scope?: string;
+    analysis_mode?: 'adaptive' | string;
+    analysis_depth_counts?: Record<string, number>;
+    deepest_tier?: number;
+    analysis_effort?: number;
+    analysis_effort_label?: string;
+    analysis_effort_max_tier?: number;
+    elapsed_ms?: number;
+    sorting_ms?: number;
   };
+  timings?: { search_ms: number; relevance_analysis_ms: number; sorting_ms: number; total_ms: number };
 };
 type RankingExplanation = { study_id: string; rank: number; breakdown: { match?: string; evidence?: EvidenceExcerpt | null; caveat?: string; additional_findings?: Array<{ finding: string; evidence: EvidenceExcerpt }>; sections?: Array<{ heading: string; points: Array<{ text: string; evidence: EvidenceExcerpt[] }> }> } };
 type AssistantResponse = {
@@ -187,7 +233,7 @@ async function getJSON<T>(url: string, options?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-type SearchProgress = { stage: string; message: string; query?: string; alternative?: string; origin?: string; query_status?: 'unavailable' };
+type SearchProgress = { stage: string; message: string; query?: string; alternative?: string; origin?: string; query_status?: 'unavailable'; study_id?: string; study_title?: string; analysis_tier?: number; analysis_next_tier?: number | null; analysis_action?: 'stop' | 'escalate'; analysis_reason?: string; analysis_grade?: number; analysis_confidence?: number; analysis_route?: number[]; analysis_effort?: number; analysis_effort_label?: string };
 type ExtraQuery = { query: string; term?: string; origin?: string; status?: 'unavailable' };
 
 function ExtraQueries({ queries, live = false, steps = [] }: {
@@ -296,16 +342,16 @@ function QueryRefinementTrace({ refinement, results, queries }: {
     candidate_limit: 'Reached the candidate limit for this search.',
   }[reason];
   return <details className="query-refinement-trace" open>
-    <summary>Query enrichment{gain && <> · <strong>{gain}</strong></>}{feedbackChecks > 0 && ` · ${feedbackChecks} feedback ${feedbackChecks === 1 ? 'check' : 'checks'}`}{steps.length > 0 && ` · ${steps.length} ${steps.length === 1 ? 'alternative' : 'alternatives'} searched`}</summary>
+    <summary>Query enrichment{gain && <> | <strong>{gain}</strong></>}{feedbackChecks > 0 && ` | ${feedbackChecks} feedback ${feedbackChecks === 1 ? 'check' : 'checks'}`}{steps.length > 0 && ` | ${steps.length} ${steps.length === 1 ? 'alternative' : 'alternatives'} searched`}</summary>
     {queries.length > 0 && <p>Each additional search tried a replacement term in the original metadata and kept the other requirements.</p>}
     <ExtraQueries queries={queries} steps={steps} />
     {refinement.new_candidate_count !== undefined && refinement.new_candidate_count > 0 && <p className="enrichment-gain">
-      {refinement.new_candidate_count} additional candidates · {refinement.new_relevant_count ?? 0} cleared relevance
+      {refinement.new_candidate_count} additional candidates | {refinement.new_relevant_count ?? 0} cleared relevance
     </p>}
     {status && <p>{status}</p>}
     <details className="enrichment-pass"><summary>Terminology and feedback details</summary>
     {refinement.providers?.filter(provider => !provider.available).map(provider =>
-      <p key={provider.id}>{provider.label} unavailable · {provider.reason}</p>)}
+      <p key={provider.id}>{provider.label} unavailable | {provider.reason}</p>)}
     {refinement.knowledge_unavailable && <p>Some knowledge sources or searches were unavailable.</p>}
     {refinement.provider_lookups?.map((lookup, index) => <div key={`${lookup.term}-${index}`} className="query-terminology-lookup">
       <strong>{lookup.term}</strong>
@@ -313,38 +359,38 @@ function QueryRefinementTrace({ refinement, results, queries }: {
       {lookup.status === 'not_found' && <p>No validated exact match in the selected vocabularies.</p>}
       {lookup.semantic_unavailable && <p>SapBERT suggestions were unavailable.</p>}
       {lookup.knowledge.filter(item => item.validated && item.term === lookup.term).map(item =>
-        <p key={item.concept_id}>{item.canonical_label} · {item.concept_id} · {item.source_type === 'exact_canonical' ? 'Exact label' : 'Exact synonym'} · {item.version}</p>)}
+        <p key={item.concept_id}>{item.canonical_label} | {item.concept_id} | {item.source_type === 'exact_canonical' ? 'Exact label' : 'Exact synonym'} | {item.version}</p>)}
       {lookup.knowledge.some(item => !item.validated) && <><p>Suggestions for review</p><ul>{lookup.knowledge.filter(item => !item.validated).map(item =>
-        <li key={`${item.source_provider}-${item.concept_id}`}>{item.canonical_label} · {item.concept_id}
-          <small>{item.source_provider === 'sapbert' ? 'SapBERT suggestion for review' : 'NCIt reference match'} · {item.version}</small>
+        <li key={`${item.source_provider}-${item.concept_id}`}>{item.canonical_label} | {item.concept_id}
+          <small>{item.source_provider === 'sapbert' ? 'SapBERT suggestion for review' : 'NCIt reference match'} | {item.version}</small>
         </li>)}</ul></>}
     </div>)}
-    {refinement.annotations?.map((item, index) => <p key={`${item.concept_id}-${index}`}>Reviewed dbGaP annotation · {item.evidence[0].variable_id} · {item.concept_id}</p>)}
+    {refinement.annotations?.map((item, index) => <p key={`${item.concept_id}-${index}`}>Reviewed dbGaP annotation | {item.evidence[0].variable_id} | {item.concept_id}</p>)}
     {steps.length > 0 && <ul>{steps.map(step => <li key={step.alternative}>
-      {step.pass !== undefined && <span>Pass {step.pass} · </span>}
-      Searched <strong>{step.alternative}</strong> as an alternative to <strong>{step.original_term}</strong> · {step.new_candidates} new {step.new_candidates === 1 ? 'candidate' : 'candidates'}
-      {step.concept && <small>{step.concept.ontology} {step.concept.concept_id} · {step.concept.ontology_release}</small>}
+      {step.pass !== undefined && <span>Pass {step.pass} | </span>}
+      Searched <strong>{step.alternative}</strong> as an alternative to <strong>{step.original_term}</strong> | {step.new_candidates} new {step.new_candidates === 1 ? 'candidate' : 'candidates'}
+      {step.concept && <small>{step.concept.ontology} {step.concept.concept_id} | {step.concept.ontology_release}</small>}
       {step.source_study_id && <small>Source study {step.source_study_id}</small>}
       {step.evidence?.[0] && <small>{step.evidence[0].excerpt}</small>}
     </li>)}</ul>}
     {refinement.passes?.map(pass => <details key={pass.pass} className="enrichment-pass">
-      <summary>Pass {pass.pass} details · {pass.new_study_ids.length} new · {pass.new_relevant_count} cleared relevance</summary>
-      <p>Sources · {pass.provider_inputs.map(id => refinement.providers?.find(provider => provider.id === id)?.label ?? id).join(', ')}</p>
-      {pass.proposed.length > 0 && <p>Proposed · {pass.proposed.join(', ')}</p>}
-      {pass.accepted.length > 0 && <p>Accepted · {pass.accepted.join(', ')}</p>}
-      {pass.search_terms.length > 0 && <p>Searched · {pass.search_terms.join(', ')}</p>}
-      {pass.rejected.length > 0 && <ul>{pass.rejected.map(item => <li key={item.term}>{item.term} · {item.reason}</li>)}</ul>}
+      <summary>Pass {pass.pass} details | {pass.new_study_ids.length} new | {pass.new_relevant_count} cleared relevance</summary>
+      <p>Sources | {pass.provider_inputs.map(id => refinement.providers?.find(provider => provider.id === id)?.label ?? id).join(', ')}</p>
+      {pass.proposed.length > 0 && <p>Proposed | {pass.proposed.join(', ')}</p>}
+      {pass.accepted.length > 0 && <p>Accepted | {pass.accepted.join(', ')}</p>}
+      {pass.search_terms.length > 0 && <p>Searched | {pass.search_terms.join(', ')}</p>}
+      {pass.rejected.length > 0 && <ul>{pass.rejected.map(item => <li key={item.term}>{item.term} | {item.reason}</li>)}</ul>}
     </details>)}
     {terminology?.status === 'unavailable' && <p>Terminology lookup was unavailable.</p>}
     {terminology?.status === 'search_unavailable' && <p>The terminology search was unavailable.</p>}
     {terminology?.status === 'checked' && !terminology.lookups.length && <p>No supported terminology lookup for these search terms.</p>}
     {terminology?.lookups.map(lookup => <div key={lookup.term} className="query-terminology-lookup">
       {lookup.concept
-        ? <p><strong>{lookup.term}</strong> resolves to {lookup.concept.label} · {lookup.concept.concept_id}</p>
+        ? <p><strong>{lookup.term}</strong> resolves to {lookup.concept.label} | {lookup.concept.concept_id}</p>
         : <p>No exact terminology match selected for <strong>{lookup.term}</strong>.</p>}
       {lookup.semantic_suggestions.length > 0 && <>
         <strong>SapBERT suggestions for review</strong>
-        <ul>{lookup.semantic_suggestions.map(item => <li key={item.concept_id}>{item.canonical_label} · {item.concept_id}</li>)}</ul>
+        <ul>{lookup.semantic_suggestions.map(item => <li key={item.concept_id}>{item.canonical_label} | {item.concept_id}</li>)}</ul>
       </>}
       {lookup.semantic_status === 'model_unavailable' && <p>SapBERT is unavailable.</p>}
       {lookup.semantic_status === 'no_semantic_index_for_source' && <p>This terminology uses exact lookup.</p>}
@@ -363,7 +409,7 @@ function ResultCard({ result, index, onOpen, saved, onSave }: { result: StudyRes
     <div className="result-icon"><Icon name="database" size={21} /></div>
     <div className="result-content">
       <div className="result-headline"><span className="result-number">#{displayedRank}</span><div className="result-title-block"><div className="ranking-line"><span className={`relevance-badge relevance-${result.relevance_label || 'unjudged'}`}>{strength}</span>{typeof result.relevance_confidence === 'number' && <span className="ranking-confidence">{Math.round(result.relevance_confidence * 100)}% confidence</span>}</div><h3><button className="result-title-link" onClick={() => onOpen(result)}>{result.original_title || 'Untitled dbGaP study'}</button></h3></div></div>
-      <div className="result-meta"><span>{result.study_id}</span><span className="meta-separator">·</span><span>Original dbGaP metadata</span></div>
+      <div className="result-meta"><span>{result.study_id}</span><span className="meta-separator">|</span><span>Original dbGaP metadata</span></div>
       {result.original_description && <SourceLinks className="study-preview" text={result.original_description} />}
       <div className="source-tags">
         {result.matched_original_sources?.slice(0, 2).map(source => <SourceTag key={source}>{source}</SourceTag>)}
@@ -431,6 +477,7 @@ function DetailsPanel({ studyId, rankingResult, saved, onSave, onClose, onWiden,
       body: JSON.stringify({
         study_id: studyId,
         research_intent: rankingResult.research_intent,
+        relevance_tier: rankingResult.relevance_tier ?? 3,
         rank: rankingResult.rank,
         deterministic_rank: rankingResult.deterministic_rank ?? null,
         relevance_grade: rankingResult.relevance_grade ?? null,
@@ -482,7 +529,7 @@ function DetailsPanel({ studyId, rankingResult, saved, onSave, onClose, onWiden,
       {error && <div className="error-callout" role="alert">{error}</div>}
       {!data && !error && <div className="loading-label"><span className="spinner" /> Loading study metadata…</div>}
       {data && <>
-        {focusedDataset && <div className="record-focus-header"><span>Dataset · {focusedDataset.dataset_id}</span><button type="button" className="outline-button" onClick={() => { setFocusedDataset(null); setRecordTab('overview'); }}>Back to study</button></div>}
+        {focusedDataset && <div className="record-focus-header"><span>Dataset | {focusedDataset.dataset_id}</span><button type="button" className="outline-button" onClick={() => { setFocusedDataset(null); setRecordTab('overview'); }}>Back to study</button></div>}
         <AnimatePresence mode="wait" initial={false}>
         <motion.div key={`${focusedDataset?.dataset_id ?? 'study'}:${recordTab}`} role="tabpanel" className="record-tab-content"
           initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -9 }}
@@ -496,10 +543,11 @@ function DetailsPanel({ studyId, rankingResult, saved, onSave, onClose, onWiden,
           {rankingLoading && <div className="loading-label compact"><span className="spinner" /> Checking ranking evidence…</div>}
           {rankingError && <p className="ranking-explanation-error">{rankingError}</p>}
           {breakdown && <ul className="ranking-breakdown">
-            {breakdown.sections?.map((section, index) => <li key={index}><strong>{section.heading}</strong><ul>{section.points.map((point, pointIndex) => <li key={pointIndex}>{point.text}{point.evidence.map((evidence, evidenceIndex) => <small className="ranking-evidence-source" key={evidenceIndex}>{evidence.source_type.replaceAll('_', ' ')} · <q>{evidence.excerpt}</q></small>)}</li>)}</ul></li>)}
+            {analysisRoute(rankingResult) && <li><strong>Analysis route</strong> {analysisRoute(rankingResult)}{rankingResult.analysis_stop_reason && <small className="ranking-analysis-reason">{rankingResult.analysis_stop_reason}</small>}</li>}
+            {breakdown.sections?.map((section, index) => <li key={index}><strong>{section.heading}</strong><ul>{section.points.map((point, pointIndex) => <li key={pointIndex}>{point.text}{point.evidence.map((evidence, evidenceIndex) => <small className="ranking-evidence-source" key={evidenceIndex}>{evidence.source_type.replaceAll('_', ' ')} | <q>{evidence.excerpt}</q></small>)}</li>)}</ul></li>)}
             {breakdown.match && <li><strong>Match</strong> {breakdown.match}</li>}
-            {breakdown.evidence && <li><strong>Evidence</strong> <span className="ranking-evidence-source">· {breakdown.evidence.source_type.replaceAll('_', ' ')}</span> <q>{breakdown.evidence.excerpt}</q></li>}
-            {breakdown.additional_findings?.map((item, index) => <li key={index}><strong>Also relevant</strong> {item.finding}<small className="ranking-evidence-source">{item.evidence.source_type.replaceAll('_', ' ')} · <q>{item.evidence.excerpt}</q></small></li>)}
+            {breakdown.evidence && <li><strong>Evidence</strong> <span className="ranking-evidence-source">| {breakdown.evidence.source_type.replaceAll('_', ' ')}</span> <q>{breakdown.evidence.excerpt}</q></li>}
+            {breakdown.additional_findings?.map((item, index) => <li key={index}><strong>Also relevant</strong> {item.finding}<small className="ranking-evidence-source">{item.evidence.source_type.replaceAll('_', ' ')} | <q>{item.evidence.excerpt}</q></small></li>)}
             {breakdown.caveat && <li><strong>Limit</strong> {breakdown.caveat}</li>}
           </ul>}
           {rankingResult.relevance_label === 'title_match' && <ul className="ranking-breakdown">
@@ -542,11 +590,11 @@ function DetailsPanel({ studyId, rankingResult, saved, onSave, onClose, onWiden,
           </>}
         {!focusedDataset && <div className="dataset-exploration" aria-label="Study datasets and related resources">
           <div className="unified-explorer-intro"><strong>Datasets & linked research resources</strong><p>Select a dataset to view only its source metadata and any URIs embedded in that dataset record.</p></div>
-          <div className="viz-caption"><strong>Dataset distribution</strong><small>Click a bar to explore this dataset type · up to 100 of each type returned</small></div>
+          <div className="viz-caption"><strong>Dataset distribution</strong><small>Click a bar to explore this dataset type | up to 100 of each type returned</small></div>
           <div className="dataset-mix-chart" role="group" aria-label="Dataset type distribution">
             {([['phenotype', phenotypeCount], ['genotype', genotypeCount]] as const).map(([kind, count]) => <button type="button" key={kind} aria-pressed={tab === kind} className={`dataset-mix-row ${tab === kind ? 'selected' : ''}`} onClick={() => { setTab(kind); setDatasetFilter(''); setFocusedDataset(null); }}><span className="mix-label"><Icon name={kind === 'phenotype' ? 'database' : 'layers'} size={16} /> {kind === 'phenotype' ? 'Phenotype' : 'Genotype'}</span><span className="mix-track"><span className={`mix-fill ${kind}`} style={{ width: `${Math.max(count ? 2 : 0, datasetTotal ? count / datasetTotal * 100 : 0)}%` }} /></span><strong>{count}</strong></button>)}
           </div>
-          {densestDatasets.length > 0 && <div className="variable-density"><div className="viz-caption"><strong>Phenotype variable coverage</strong><small>Top returned phenotype datasets by variable count · click to filter</small></div>{densestDatasets.map(d => <button key={d.dataset_id} onClick={() => { setTab('phenotype'); setDatasetFilter(d.dataset_id); setFocusedDataset(null); }} className="density-row"><span title={d.original_title || d.dataset_id}>{d.original_title || d.dataset_id}</span><span className="density-bar"><span style={{ width: `${Math.round(100 * Number(d.variable_count) / Math.max(1, Number(densestDatasets[0].variable_count)))}%` }} /></span><b>{d.variable_count}</b></button>)}</div>}
+          {densestDatasets.length > 0 && <div className="variable-density"><div className="viz-caption"><strong>Phenotype variable coverage</strong><small>Top returned phenotype datasets by variable count | click to filter</small></div>{densestDatasets.map(d => <button key={d.dataset_id} onClick={() => { setTab('phenotype'); setDatasetFilter(d.dataset_id); setFocusedDataset(null); }} className="density-row"><span title={d.original_title || d.dataset_id}>{d.original_title || d.dataset_id}</span><span className="density-bar"><span style={{ width: `${Math.round(100 * Number(d.variable_count) / Math.max(1, Number(densestDatasets[0].variable_count)))}%` }} /></span><b>{d.variable_count}</b></button>)}</div>}
           <div className="dataset-list-head"><strong>Explore {tab} datasets</strong><span>{shownDatasets.length} shown</span></div>
           <div className="dataset-tabs" role="tablist" aria-label="Dataset type">
             <button role="tab" aria-selected={tab === 'phenotype'} className={tab === 'phenotype' ? 'active' : ''} onClick={() => { setTab('phenotype'); setFocusedDataset(null); }}>Phenotype ({phenotypeCount})</button>
@@ -556,11 +604,11 @@ function DetailsPanel({ studyId, rankingResult, saved, onSave, onClose, onWiden,
           <div className="dataset-list">
             {shownDatasets.length === 0 && <p className="muted">No {tab} datasets {datasetFilter ? 'match the filter' : 'were returned for this study'}.</p>}
             {shownDatasets.map(dataset => <details className="dataset-row" key={dataset.dataset_id}>
-              <summary><span><strong>{dataset.original_title || 'Untitled dataset'}</strong><small>{dataset.dataset_id}{dataset.variable_count != null ? ` · ${dataset.variable_count} variables` : ''}</small></span><Icon name="chevron" size={16} /></summary>
+              <summary><span><strong>{dataset.original_title || 'Untitled dataset'}</strong><small>{dataset.dataset_id}{dataset.variable_count != null ? ` | ${dataset.variable_count} variables` : ''}</small></span><Icon name="chevron" size={16} /></summary>
               <SourceLinks text={dataset.original_description || 'No source description provided.'} />
               {dataset.source_path && <div className="source-path" title={dataset.source_path}><strong>Source file</strong> {dataset.source_path}</div>}
               <div className="dataset-resource-status">
-                <span>{sourceUrls(dataset.original_description).filter(isSupportedResourceLink).length ? `${sourceUrls(dataset.original_description).filter(isSupportedResourceLink).length} retrievable API reference(s)` : 'Metadata available · no supported machine-readable API link'}</span>
+                <span>{sourceUrls(dataset.original_description).filter(isSupportedResourceLink).length ? `${sourceUrls(dataset.original_description).filter(isSupportedResourceLink).length} retrievable API reference(s)` : 'Metadata available | no supported machine-readable API link'}</span>
                 <button className="dataset-follow-up" type="button" onClick={() => inspectDataset(dataset)}>{sourceUrls(dataset.original_description).filter(isSupportedResourceLink).length ? "View dataset resources" : "View this dataset’s metadata"} <Icon name="arrow" size={15} /></button>
               </div>
             </details>)}
@@ -602,11 +650,23 @@ export default function ChatApp() {
   });
   const [view, setView] = useState<View>('research');
   const [draft, setDraft] = useState('');
+  const [relevanceCutoffGrade, setRelevanceCutoffGrade] = useState(2);
+  const [analysisEffort, setAnalysisEffort] = useState(2);
+  const selectedAnalysisEffort = ANALYSIS_EFFORT_OPTIONS.find(option => option.effort === analysisEffort) ?? ANALYSIS_EFFORT_OPTIONS[1];
+  const [relevanceCutoffOpen, setRelevanceCutoffOpen] = useState(false);
   const [liveSearch, setLiveSearch] = useState<{ sessionId: string; progress: SearchProgress[]; extraQueries: ExtraQuery[] } | null>(null);
   const pending = liveSearch !== null;
   const [queryRefinement, setQueryRefinement] = useState(true);
-  const [enrichmentExpanded, setEnrichmentExpanded] = useState(false);
+  const [enrichmentOpen, setEnrichmentOpen] = useState(false);
   const currentProgress = liveSearch?.sessionId === activeSessionId ? liveSearch?.progress : undefined;
+  const generalProgress = currentProgress?.filter(item => item.stage !== 'analysis');
+  const liveAnalysisStudies = useMemo(() => {
+    const byStudy = new Map<string, SearchProgress>();
+    for (const item of currentProgress ?? []) {
+      if (item.stage === 'analysis' && item.study_id) byStudy.set(item.study_id, item);
+    }
+    return [...byStudy.values()];
+  }, [currentProgress]);
   const [refinementPasses, setRefinementPasses] = useState(3);
   const [knowledgeProviders, setKnowledgeProviders] = useState<KnowledgeProvider[] | null>(null);
   const [excludedProviders, setExcludedProviders] = useState<string[]>([]);
@@ -653,6 +713,23 @@ export default function ChatApp() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const latestResponseRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const relevanceCutoffRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!relevanceCutoffOpen) return;
+    const closeOnPointer = (event: PointerEvent) => {
+      if (!relevanceCutoffRef.current?.contains(event.target as Node)) setRelevanceCutoffOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setRelevanceCutoffOpen(false);
+    };
+    document.addEventListener('pointerdown', closeOnPointer);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOnPointer);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [relevanceCutoffOpen]);
+
   const requestRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -759,7 +836,8 @@ export default function ChatApp() {
       const result = await streamChat({
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: prompt, history, query_providers: enabledProviderIds,
-          query_refinement_passes: usesResultFeedback ? refinementPasses : 0 }), signal: controller.signal,
+          query_refinement_passes: usesResultFeedback ? refinementPasses : 0,
+          relevance_cutoff_grade: relevanceCutoffGrade, analysis_effort: analysisEffort }), signal: controller.signal,
       }, event => {
         if (requestRef.current !== controller) return;
         if (event.query) {
@@ -768,7 +846,7 @@ export default function ChatApp() {
         }
         setLiveSearch(previous => previous && {
           sessionId: previous.sessionId,
-          progress: [...previous.progress, event].slice(-40),
+          progress: [...previous.progress, event].slice(-240),
           extraQueries: [...extraQueries],
         });
       });
@@ -812,7 +890,7 @@ export default function ChatApp() {
           {recentSessions.length === 0 ? <p className="sidebar-empty">Your conversations will appear here.</p> : recentSessions.slice(0, 8).map(session => <button key={session.id} className={`recent-chat ${activeSessionId === session.id && view === 'research' ? 'active' : ''}`} onClick={() => openSession(session.id)} title={session.title}><Icon name="chat" size={15} /><span>{session.title}</span></button>)}
         </div>
         <button className="all-history" onClick={() => navigate('history')}><Icon name="clock" size={16} /> View chat history</button>
-        <div className="sidebar-bottom"><div className={`model-status-dot ${status?.model_ready ? 'ready' : ''}`} /><div><strong>{status?.model_ready ? 'MedGemma ready' : status?.ollama_reachable ? 'MedGemma not loaded' : 'Checking model status'}</strong><small>Original dbGaP corpus · Read-only</small></div></div>
+        <div className="sidebar-bottom"><div className={`model-status-dot ${status?.model_ready ? 'ready' : ''}`} /><div><strong>{status?.model_ready ? 'MedGemma ready' : status?.ollama_reachable ? 'MedGemma not loaded' : 'Checking model status'}</strong><small>Original dbGaP corpus | Read-only</small></div></div>
       </aside>
       <motion.main className="workspace" id="main-content" layout="position" transition={{ layout: { duration: reduceMotion ? 0 : 0.58, ease: [0.22, 1, 0.36, 1] } }}>
         {view === 'research' ? <>
@@ -820,7 +898,7 @@ export default function ChatApp() {
             {messages.length === 0 ? <>
               <section className="hero" aria-labelledby="research-heading">
                 <div className="hero-content">
-                  <p className="hero-eyebrow">NIH SPARK · dbGaP</p>
+                  <p className="hero-eyebrow">NIH SPARK | dbGaP</p>
                   <h1 id="research-heading">Explore dbGaP studies</h1>
                   <p>Ask a research question to find ranked studies and explore their original datasets.</p>
                 </div>
@@ -856,7 +934,8 @@ export default function ChatApp() {
                       provenanceAvailable={!message.data.search.query_refinement || message.data.search.query_refinement.steps.every(step => Array.isArray(step.new_study_ids))}
                       enrichedStudyIds={message.data.search.query_refinement?.steps.flatMap(step => step.new_study_ids ?? [])}
                       renderCard={(result, index) => <ResultCard result={result} index={index} key={result.study_id} onOpen={openRankedStudy} onSave={toggleSaveFromResult} saved={saved.some(s => s.study_id === result.study_id)} />} />}
-                    {message.data.search.relevance_judging?.applied && <p className="ranking-trace"><strong>Relevance cutoff</strong> · Grade {message.data.search.relevance_judging.threshold_grade}+ · MedGemma judged {message.data.search.relevance_judging.judged_candidate_count} candidates · {message.data.search.relevance_judging.marginal_or_irrelevant_count || 0} below cutoff{Boolean(message.data.search.relevance_judging.returned_title_match_count) && ` · ${message.data.search.relevance_judging.returned_title_match_count} shown on title evidence`}{message.data.search.relevance_judging.review_limit_reached ? ' · review limit reached before an irrelevance boundary' : ''}</p>}
+                    {message.data.search.relevance_judging?.applied && <p className="ranking-trace"><strong>Relevance cutoff</strong> | Grade {message.data.search.relevance_judging.threshold_grade}+ | MedGemma judged {message.data.search.relevance_judging.judged_candidate_count} candidates | {message.data.search.relevance_judging.marginal_or_irrelevant_count || 0} below cutoff{Boolean(message.data.search.relevance_judging.returned_title_match_count) && ` | ${message.data.search.relevance_judging.returned_title_match_count} shown on title evidence`}{message.data.search.relevance_judging.review_limit_reached ? ' | review limit reached before an irrelevance boundary' : ''}</p>}
+                    {message.data.search.relevance_judging?.analysis_mode === 'adaptive' && message.data.search.relevance_judging.analysis_depth_counts && <p className="ranking-trace"><strong>Adaptive analysis</strong> | {Object.entries(message.data.search.relevance_judging.analysis_depth_counts).sort(([a], [b]) => Number(a) - Number(b)).map(([tier, count]) => `${count} resolved at ${analysisDepth(Number(tier))?.replace(/^Depth \d+ | /, '') ?? `depth ${tier}`}`).join(' | ')}</p>}
                     <p className="result-footer"><Icon name="info" size={14} /> Matches use original source descriptions, not verified biomedical mappings.</p>
                   </section>}
                   {message.data?.study && <button className="outline-button open-details" onClick={() => openStudy(message.data!.study!.study.study_id)}>View study datasets <Icon name="arrow" size={17} /></button>}
@@ -870,9 +949,24 @@ export default function ChatApp() {
                   <div className="message-head"><strong>{ASSISTANT_NAME}</strong></div>
                   <section className="search-live" aria-label="Live search progress">
                     <div className="search-live-header"><span className="search-live-pulse" aria-hidden="true" /><div><strong>Research in progress</strong><small>Following the search from question to ranked studies</small></div><span className="search-live-badge">LIVE</span></div>
-                    {currentProgress.length > 1 && <ul className="search-live-history" aria-live="off">
-                      {currentProgress.slice(0, -1).map((item, index) => <li key={`${item.stage}-${index}`}><span>{item.message}</span>{item.query && <small>{item.origin === 'retrieved_evidence' ? 'Based on retrieved study evidence' : `Terminology source · ${item.origin?.toUpperCase()}`}</small>}</li>)}
+                    {generalProgress && generalProgress.length > 1 && <ul className="search-live-history" aria-live="off">
+                      {generalProgress.slice(0, -1).map((item, index) => <li key={`${item.stage}-${index}`}><span>{item.message}</span>{item.query && <small>{item.origin === 'retrieved_evidence' ? 'Based on retrieved study evidence' : `Terminology source | ${item.origin?.toUpperCase()}`}</small>}</li>)}
                     </ul>}
+                    {liveAnalysisStudies.length > 0 && <details className="adaptive-analysis-trace" open>
+                      <summary><span>Adaptive study analysis</span><small>{liveAnalysisStudies[0]?.analysis_effort_label ? `${liveAnalysisStudies[0].analysis_effort_label} | ` : ""}{liveAnalysisStudies.length} studies routed independently</small></summary>
+                      <div className="adaptive-analysis-list">{liveAnalysisStudies.map(item => {
+                        const route = analysisRouteTiers(item.analysis_route ?? (item.analysis_tier ? [item.analysis_tier] : []));
+                        const status = item.analysis_action === 'escalate' && item.analysis_next_tier ? `checking Tier ${item.analysis_next_tier}` : 'resolved';
+                        return <div className={`adaptive-analysis-row ${item.analysis_action ?? ''}`} key={item.study_id}>
+                          <div><strong>{item.study_id}</strong><span>{item.study_title || 'dbGaP study'}</span></div>
+                          <div className="adaptive-analysis-decision">
+                            <span className="adaptive-analysis-status"><strong>{item.analysis_grade != null && item.analysis_tier ? `Grade ${item.analysis_grade} / Tier ${item.analysis_tier}` : item.analysis_tier ? `Tier ${item.analysis_tier}` : 'Analyzing'}</strong><span>{status}</span></span>
+                            {route && <small className="adaptive-analysis-route">Route: {route}</small>}
+                            <small>{item.analysis_reason}</small>
+                          </div>
+                        </div>;
+                      })}</div>
+                    </details>}
                     <div className="loading-label" role="status"><span className="spinner" aria-hidden="true" />{currentProgress.at(-1)?.message}</div>
                   </section>
                   {Boolean(liveSearch?.extraQueries.length) && <details className="query-refinement-trace" open><summary>Query enrichment</summary><ExtraQueries queries={liveSearch?.extraQueries ?? []} live /></details>}
@@ -882,20 +976,89 @@ export default function ChatApp() {
             </div>}
           </div>
           <footer className="composer-wrap">
-            <div className="composer"><textarea ref={inputRef} rows={1} aria-label="Ask a research question" placeholder="Ask a research question…" value={draft} readOnly={pending} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (!pending && event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); } }} /><button className="primary-button send-button" disabled={pending || providerLoading || !draft.trim()} onClick={() => { void send(); }} aria-label="Send message" title="Send message"><Icon name="send" size={20} /></button></div>
-            <section className="composer-options" aria-labelledby="query-enrichment-title">
-              <div className="composer-enrichment-header"><label className="composer-enrichment-heading"><input type="checkbox" checked={queryRefinement} disabled={pending} onChange={event => setQueryRefinement(event.target.checked)} /><span><strong id="query-enrichment-title">Query Enrichment</strong><span className="composer-enrichment-note">Selected sources help find alternative search terms. Search results can also guide additional searches.</span></span></label><button type="button" className="enrichment-expand" aria-label={enrichmentExpanded ? 'Hide query enrichment settings' : 'Show query enrichment settings'} aria-expanded={enrichmentExpanded} aria-controls="enrichment-settings" onClick={() => setEnrichmentExpanded(value => !value)}><Icon name="chevron" size={28} className={enrichmentExpanded ? 'expanded' : ''} /></button></div>
-              {queryRefinement && enrichmentExpanded && providerLoading && <span role="status">Checking available knowledge sources…</span>}
-              {queryRefinement && enrichmentExpanded && providerError && <span role="status">Could not refresh the knowledge sources.</span>}
-              {queryRefinement && knowledgeProviders && <section id="enrichment-settings" hidden={!enrichmentExpanded} className="composer-provider-picker" aria-label="Knowledge sources">
+            <div className="composer">
+              <textarea ref={inputRef} rows={1} aria-label="Ask a research question" placeholder="Ask a research question…" value={draft} readOnly={pending} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (!pending && event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); } }} />
+              <div className="relevance-cutoff-control" ref={relevanceCutoffRef}>
+                <button
+                  type="button"
+                  className={`relevance-cutoff-trigger${relevanceCutoffOpen ? ' open' : ''}`}
+                  aria-label={`Relevance analysis: Grade ${relevanceCutoffGrade}${relevanceCutoffGrade < 3 ? '+' : ''}, Tier ${analysisEffort}`}
+                  aria-haspopup="menu"
+                  aria-expanded={relevanceCutoffOpen}
+                  disabled={pending}
+                  onClick={() => setRelevanceCutoffOpen(open => !open)}
+                >
+                  <span>Grade {relevanceCutoffGrade}{relevanceCutoffGrade < 3 ? '+' : ''} / Tier {analysisEffort}</span>
+                  <Icon name="chevron" size={14} />
+                </button>
+                {relevanceCutoffOpen && <div className="relevance-cutoff-popover" role="menu" aria-label="Relevance cutoff options">
+                  <div className="relevance-cutoff-popover-head">
+                    <strong>Relevance analysis</strong>
+                    <p>Choose how strict the final relevance cutoff is and how much evidence the adaptive analyzer is allowed to inspect.</p>
+                  </div>
+                  <div className="relevance-cutoff-section">
+                    <div className="relevance-cutoff-section-title"><strong>Relevance cutoff</strong><small>Controls which MedGemma relevance grades are allowed into the final ranked results.</small></div>
+                    <div className="relevance-cutoff-options">
+                      {[
+                        { grade: 1, title: 'Grade 1+ (Lenient)', detail: 'Keep marginal, relevant, and strong matches.' },
+                        { grade: 2, title: 'Grade 2+ (Balanced)', detail: 'Keep relevant and strong matches. Recommended default.' },
+                        { grade: 3, title: 'Grade 3 (Strict)', detail: 'Keep only strong matches.' },
+                      ].map(option => <button
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={relevanceCutoffGrade === option.grade}
+                        className={`relevance-cutoff-option${relevanceCutoffGrade === option.grade ? ' selected' : ''}`}
+                        key={option.grade}
+                        onClick={() => { setRelevanceCutoffGrade(option.grade); inputRef.current?.focus(); }}
+                      >
+                        <span><strong>{option.title}</strong><small>{option.detail}</small></span>
+                        {relevanceCutoffGrade === option.grade && <span className="relevance-cutoff-check" aria-hidden="true">✓</span>}
+                      </button>)}
+                    </div>
+                  </div>
+                  <div className="relevance-cutoff-section analysis-effort-section">
+                    <div className="relevance-cutoff-section-title"><strong>Analysis effort</strong><small>Controls how deep adaptive relevance analysis is allowed to go before using its best completed judgment.</small></div>
+                    <div className="analysis-effort-current" aria-live="polite">
+                      <strong>Tier {analysisEffort} ({selectedAnalysisEffort.title})</strong>
+                      <small>{selectedAnalysisEffort.detail}</small>
+                    </div>
+                    <div className="analysis-effort-slider-wrap">
+                      <input className="analysis-effort-slider" type="range" min={1} max={5} step={1} value={analysisEffort}
+                        aria-label="Analysis effort" aria-valuetext={`${analysisEffort} ${selectedAnalysisEffort.title}`}
+                        onChange={event => setAnalysisEffort(Number(event.target.value))} />
+                      <div className="analysis-effort-scale" aria-hidden="true">
+                        {ANALYSIS_EFFORT_OPTIONS.map(option => <span className={option.effort === analysisEffort ? 'selected' : ''} key={option.effort}>{option.effort}</span>)}
+                      </div>
+                    </div>
+                  </div>
+                </div>}
+              </div>
+              <button className="primary-button send-button" disabled={pending || providerLoading || !draft.trim()} onClick={() => { void send(); }} aria-label="Send message" title="Send message"><Icon name="send" size={20} /></button>
+            </div>
+            <section className="composer-options" aria-label="Search configuration">
+              <details className="composer-enrichment-disclosure" open={enrichmentOpen} onToggle={event => setEnrichmentOpen(event.currentTarget.open)}>
+                <summary className="composer-enrichment-tab">
+                  <label className="composer-enrichment-header-control" onClick={event => event.stopPropagation()}>
+                    <input type="checkbox" checked={queryRefinement} disabled={pending} onChange={event => setQueryRefinement(event.target.checked)} />
+                    <span>
+                      <strong>Query Enrichment</strong>
+                      <small>Expands the research question with source-supported terminology and retrieved-study evidence to improve discovery while preserving the original research intent.</small>
+                    </span>
+                  </label>
+                  <Icon name="chevron" size={17} className="composer-enrichment-chevron" />
+                </summary>
+              <div className="composer-config-panel" role="region" aria-label="Query Enrichment">
+              {providerLoading && <span role="status">Checking available knowledge sources…</span>}
+              {providerError && queryRefinement && <span role="status">Could not refresh the knowledge sources.</span>}
+              {knowledgeProviders && <section id="enrichment-settings" className={`composer-provider-picker${queryRefinement ? '' : ' enrichment-disabled'}`} aria-label="Knowledge sources" aria-disabled={!queryRefinement}>
                 <div className="composer-enrichment-methods">
                   {KNOWLEDGE_GROUPS.map(([category, label]) => {
                     const group = knowledgeProviders.filter(provider => provider.category === category);
                     if (!group.length) return null;
                     const groupEnabled = !disabledSourceGroups.includes(category);
                     return <div className="composer-provider-group" key={category}>
-                      <fieldset disabled={pending}>
-                        <legend><label className="composer-group-toggle"><input type="checkbox" checked={groupEnabled} disabled={pending || !group.some(provider => provider.available)} onChange={event => {
+                      <fieldset disabled={pending || !queryRefinement}>
+                        <legend><label className="composer-group-toggle"><input type="checkbox" checked={groupEnabled} disabled={pending || !queryRefinement || !group.some(provider => provider.available)} onChange={event => {
                           const checked = event.target.checked;
                           setDisabledSourceGroups(previous => checked ? previous.filter(item => item !== category) : [...previous, category]);
                           setExcludedProviders(previous => checked
@@ -906,7 +1069,7 @@ export default function ChatApp() {
                         {group.map(provider => <div className="composer-provider-option" key={provider.id}>
                           {provider.id !== 'retrieved_evidence' &&
                           <label className="composer-refinement-toggle">
-                            <input type="checkbox" disabled={!provider.available || !groupEnabled}
+                            <input type="checkbox" disabled={!queryRefinement || !provider.available || !groupEnabled}
                               checked={enabledProviderIds.includes(provider.id)}
                               onChange={event => {
                                 const checked = event.target.checked;
@@ -917,7 +1080,7 @@ export default function ChatApp() {
                             <span>{provider.label}{!provider.available && provider.reason && <small>{provider.reason}</small>}</span>
                           </label>}
                           {provider.id === 'retrieved_evidence' && <div className="composer-refinement-passes">
-                            <select aria-label="How often to use search results to enrich the query" value={refinementPasses} disabled={!provider.available || !groupEnabled}
+                            <select aria-label="How often to use search results to enrich the query" value={refinementPasses} disabled={!queryRefinement || !provider.available || !groupEnabled}
                               onChange={event => setRefinementPasses(Number(event.target.value))}>
                               <option value={0}>Don’t use results to refine</option>
                               {[1, 2, 3, 4, 5].map(count => <option key={count} value={count}>Refine from results up to {count} {count === 1 ? 'time' : 'times'}</option>)}
@@ -930,6 +1093,8 @@ export default function ChatApp() {
                   })}
                 </div>
               </section>}
+              </div>
+              </details>
             </section>
             <p className="composer-disclaimer">MedGemma may make mistakes. Verify findings against the original dbGaP study records.</p>
           </footer>
@@ -937,8 +1102,8 @@ export default function ChatApp() {
           initial={{ opacity: 0, y: reduceMotion ? 0 : 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={enterTransition}>
-          {view === 'saved' && <><div className="section-heading"><span className="section-eyebrow">YOUR WORKSPACE</span><h1>Saved results</h1><p>Study records saved locally in this browser, ready to revisit.</p></div>{saved.length === 0 ? <EmptySection icon="bookmark" title="No saved studies yet" description="Save a study from a search result or its details panel to see it here." /> : <div className="saved-list">{saved.map(s => <div className="saved-item" key={s.study_id}><div className="result-icon"><Icon name="database" /></div><div><strong>{s.original_title || 'Untitled dbGaP study'}</strong><small>{s.study_id} · Saved {dateLabel(s.savedAt)}</small><p>{s.original_description}</p></div><button className="outline-button" onClick={() => openStudy(s.study_id)}>View details</button><button className="icon-button" title="Remove saved study" aria-label={`Remove ${s.study_id} from saved`} onClick={() => setSaved(current => current.filter(item => item.study_id !== s.study_id))}><Icon name="x" size={18} /></button></div>)}</div>}</>}
-          {view === 'history' && <><div className="section-heading"><span className="section-eyebrow">YOUR WORKSPACE</span><h1>Chat history</h1><p>Resume an earlier research conversation or start a new one.</p></div>{recentSessions.length === 0 ? <EmptySection icon="clock" title="No conversations yet" description="Start a new research chat and your conversation will appear here." /> : <div className="history-list">{recentSessions.map(s => <div className="history-item" key={s.id}><button className="history-open" onClick={() => openSession(s.id)}><Icon name="chat" size={19} /><span><strong>{s.title}</strong><small>{dateLabel(s.updatedAt)} · {s.messages.length} messages</small></span><Icon name="chevron" size={18} /></button><button className="icon-button" aria-label={`Delete conversation ${s.title}`} title="Delete conversation" onClick={() => deleteSession(s.id)}><Icon name="trash" size={18} /></button></div>)}</div>}</>}
+          {view === 'saved' && <><div className="section-heading"><span className="section-eyebrow">YOUR WORKSPACE</span><h1>Saved results</h1><p>Study records saved locally in this browser, ready to revisit.</p></div>{saved.length === 0 ? <EmptySection icon="bookmark" title="No saved studies yet" description="Save a study from a search result or its details panel to see it here." /> : <div className="saved-list">{saved.map(s => <div className="saved-item" key={s.study_id}><div className="result-icon"><Icon name="database" /></div><div><strong>{s.original_title || 'Untitled dbGaP study'}</strong><small>{s.study_id} | Saved {dateLabel(s.savedAt)}</small><p>{s.original_description}</p></div><button className="outline-button" onClick={() => openStudy(s.study_id)}>View details</button><button className="icon-button" title="Remove saved study" aria-label={`Remove ${s.study_id} from saved`} onClick={() => setSaved(current => current.filter(item => item.study_id !== s.study_id))}><Icon name="x" size={18} /></button></div>)}</div>}</>}
+          {view === 'history' && <><div className="section-heading"><span className="section-eyebrow">YOUR WORKSPACE</span><h1>Chat history</h1><p>Resume an earlier research conversation or start a new one.</p></div>{recentSessions.length === 0 ? <EmptySection icon="clock" title="No conversations yet" description="Start a new research chat and your conversation will appear here." /> : <div className="history-list">{recentSessions.map(s => <div className="history-item" key={s.id}><button className="history-open" onClick={() => openSession(s.id)}><Icon name="chat" size={19} /><span><strong>{s.title}</strong><small>{dateLabel(s.updatedAt)} | {s.messages.length} messages</small></span><Icon name="chevron" size={18} /></button><button className="icon-button" aria-label={`Delete conversation ${s.title}`} title="Delete conversation" onClick={() => deleteSession(s.id)}><Icon name="trash" size={18} /></button></div>)}</div>}</>}
           {view === 'datasets' && <><div className="section-heading"><span className="section-eyebrow">DISCOVERY HISTORY</span><h1>Discovered studies</h1><p>Studies returned in your recent research conversations. Select a study to inspect its original datasets.</p></div>{recentStudies.length === 0 ? <EmptySection icon="database" title="No studies discovered yet" description="Search for a biomedical topic to populate your discovery list." /> : <div className="dataset-results">{recentStudies.map((study, index) => <ResultCard key={study.study_id} result={study} index={index} onOpen={openRankedStudy} onSave={toggleSaveFromResult} saved={saved.some(s => s.study_id === study.study_id)} />)}</div>}</>}
           {view === 'usecases' && <><div className="section-heading"><span className="section-eyebrow">GET STARTED</span><h1>Research use cases</h1><p>Choose an example to start a new MedGemma-powered search against the original dbGaP corpus.</p></div><div className="usecase-grid">{suggestions.map(item => <button className="usecase-card" key={item.title} onClick={() => { void send(item.prompt, true); }}><span className="starter-icon"><Icon name={item.icon} size={22} /></span><strong>{item.title}</strong><p>{item.prompt}</p><span className="usecase-action">Start research <Icon name="arrow" size={16} /></span></button>)}</div></>}
           {view === 'help' && <><div className="section-heading"><span className="section-eyebrow">ABOUT THIS PROTOTYPE</span><h1>Help & resources</h1><p>How to find and inspect dbGaP studies with ICF Study Explorer.</p></div><div className="help-panels"><div className="help-panel"><div className="result-icon"><Icon name="chat" /></div><div><h3>Ask MedGemma about a research topic</h3><p>Start a conversation using everyday language. The model requests a backend-controlled search of original dbGaP metadata, then describes returned results.</p></div></div><div className="help-panel"><div className="result-icon"><Icon name="spark" /></div><div><h3>Enrich a research query</h3><p>Query Enrichment searches for alternative terms using the selected terminology sources. MedGemma can also review retrieved study descriptions for source-supported terms and run additional searches, up to the limit you choose. The app combines new candidates with the original results and ranks them against your original question. Open Query enrichment in the results to see the searches, and use Filter studies to compare original and added results. SapBERT, NCIt, and UMLS reference matches are candidates for review, not automatically verified equivalents. UMLS is optional and starts disabled.</p></div></div><div className="help-panel"><div className="result-icon"><Icon name="database" /></div><div><h3>Inspect actual study and dataset records</h3><p>Use “View details” to see original study descriptions and phenotype/genotype dataset listings. No example studies are fabricated for the interface.</p></div></div><div className="help-panel"><div className="result-icon"><Icon name="bookmark" /></div><div><h3>Save work locally</h3><p>Chat history and saved studies are stored only in this browser. This demonstration has no user accounts or shared storage.</p></div></div><div className="help-panel"><div className="result-icon"><Icon name="info" /></div><div><h3>Interpret results cautiously</h3><p>Source-text matches are not confirmed clinical terminology mappings. Verify relevance and access requirements from the original dbGaP records.</p></div></div></div></>}
@@ -951,7 +1116,7 @@ export default function ChatApp() {
         exit={{ width: 0, opacity: 0 }}
         transition={{ width: { duration: draggingPanel || reduceMotion ? 0 : 0.66, ease: [0.22, 1, 0.36, 1] }, opacity: { duration: reduceMotion ? 0 : 0.48 } }}
         style={{ flexShrink: 0 }}>
-        <div ref={dragHandle} className="panel-resize-handle" role="separator" aria-label="Resize study details panel" aria-orientation="vertical" aria-valuenow={Math.round(panelWidth)} aria-valuemin={310} aria-valuemax={Math.max(320, window.innerWidth - 660)} tabIndex={0} onPointerDown={panelPointerDown} onPointerMove={panelPointerMove} onPointerUp={panelPointerUp} onPointerCancel={panelPointerUp} onDoubleClick={() => resizePanel(395)} onKeyDown={e => { if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); resizePanel(panelWidth + (e.key === 'ArrowLeft' ? 1 : -1) * (e.shiftKey ? 64 : 24)); } if (e.key === 'Home') resizePanel(395); }} title="Drag to resize · arrow keys to adjust · double-click to reset"><span className="resize-grip" aria-hidden="true" /></div>
+        <div ref={dragHandle} className="panel-resize-handle" role="separator" aria-label="Resize study details panel" aria-orientation="vertical" aria-valuenow={Math.round(panelWidth)} aria-valuemin={310} aria-valuemax={Math.max(320, window.innerWidth - 660)} tabIndex={0} onPointerDown={panelPointerDown} onPointerMove={panelPointerMove} onPointerUp={panelPointerUp} onPointerCancel={panelPointerUp} onDoubleClick={() => resizePanel(395)} onKeyDown={e => { if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); resizePanel(panelWidth + (e.key === 'ArrowLeft' ? 1 : -1) * (e.shiftKey ? 64 : 24)); } if (e.key === 'Home') resizePanel(395); }} title="Drag to resize | arrow keys to adjust | double-click to reset"><span className="resize-grip" aria-hidden="true" /></div>
         <DetailsPanel studyId={selectedStudy} rankingResult={selectedResult} saved={Boolean(selectedStudy && saved.some(s => s.study_id === selectedStudy))} onSave={saveStudy} onClose={closeStudy} onWiden={togglePanelExpand} isWide={panelExpanded} />
       </motion.div>}
       </AnimatePresence>
